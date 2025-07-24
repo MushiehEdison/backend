@@ -2,6 +2,7 @@ from flask import Blueprint, request, jsonify, current_app
 from flask_cors import CORS
 import jwt
 import datetime
+from datetime import timezone
 import uuid
 import logging
 from . import db, bcrypt
@@ -13,39 +14,40 @@ from .speech import generate_tts_audio
 logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-
 # Initialize Blueprint
 auth_bp = Blueprint('auth', __name__, url_prefix='/api/auth')
-CORS(auth_bp, origins=["https://healia.netlify.app"], supports_credentials=True)
+CORS(auth_bp, origins=["http://localhost:5173", "https://healia.netlify.app"], supports_credentials=True)
 
 def verify_user_from_token(auth_header):
     """Verify user from JWT token in Authorization header."""
     logger.debug(f"Verifying token with auth_header: {auth_header}")
-    if not auth_header or not auth_header.startswith('Bearer '):
-        logger.error("Missing or invalid Authorization header")
+    if not auth_header:
+        logger.error("Authorization header is missing")
         return None
-    token = auth_header.split(' ')[1]
+    if not auth_header.startswith('Bearer '):
+        logger.error(f"Invalid Authorization header format: {auth_header}")
+        return None
+    token = auth_header.split(' ')[1].strip()  # Strip whitespace
+    if not token:
+        logger.error("Token is empty after splitting Authorization header")
+        return None
     try:
         decoded = jwt.decode(token, current_app.config['SECRET_KEY'], algorithms=['HS256'], options={'verify_exp': True})
         user = User.query.get(decoded['user_id'])
         if not user:
-            logger.error("User not found for decoded user_id")
+            logger.error(f"User not found for user_id: {decoded['user_id']}")
             return None
         logger.debug(f"User verified: {user.id}")
         return user
     except jwt.ExpiredSignatureError:
-        logger.error("Token expired")
+        logger.error("Token has expired")
         return None
-    except jwt.InvalidTokenError:
-        logger.error("Invalid token")
+    except jwt.InvalidTokenError as e:
+        logger.error(f"Invalid token: {str(e)}")
         return None
     except Exception as e:
-        logger.error(f"Error verifying token: {str(e)}")
+        logger.error(f"Unexpected error verifying token: {str(e)}")
         return None
-
-@auth_bp.route('/', methods=['GET', 'HEAD'])
-def health_check():
-    return jsonify({'message': 'Server is running'}), 200
 
 @auth_bp.route('/signup', methods=['POST'])
 def signup():
@@ -58,7 +60,6 @@ def signup():
             logger.error("Missing required fields")
             return jsonify({'message': 'Missing required fields'}), 400
 
-        # Check for existing email or username
         if User.query.filter_by(email=data['email']).first():
             logger.error("Email already exists")
             return jsonify({'message': 'Email already exists'}), 400
@@ -72,10 +73,10 @@ def signup():
         hashed_password = bcrypt.generate_password_hash(data['password']).decode('utf-8')
         new_user = User(
             name=data['name'],
-            username=data['username'],  # Explicitly set username
+            username=data['username'],
             email=data['email'],
             password=hashed_password,
-            phone=data['phone'],  # Explicitly set phone
+            phone=data['phone'],
             language=data['language'],
             gender=data['gender']
         )
@@ -336,15 +337,17 @@ def conversation(conversation_id):
 def latest_conversation():
     """Handle GET and POST requests for the latest conversation."""
     logger.debug("Received latest conversation request")
-    user = verify_user_from_token(request.headers.get('Authorization'))
+    auth_header = request.headers.get('Authorization')
+    user = verify_user_from_token(auth_header)
     if not user:
-        logger.error("Invalid or missing token")
+        logger.error(f"Token verification failed for header: {auth_header}")
         return jsonify({'message': 'Invalid or missing token'}), 401
 
     if request.method == 'GET':
         try:
             conversation = Conversation.query.filter_by(user_id=user.id)\
-                .filter(Conversation.messages != None, Conversation.messages != [])\
+                .filter(Conversation.messages != None)\
+                .filter(db.cast(Conversation.messages, db.Text) != '[]')\
                 .order_by(Conversation.updated_at.desc().nullslast(), Conversation.created_at.desc())\
                 .first()
             if not conversation:
@@ -383,7 +386,7 @@ def latest_conversation():
                 conversation = Conversation(
                     user_id=user.id,
                     messages=[],
-                    created_at=datetime.now(timezone.utc)
+                    created_at=datetime.datetime.now(datetime.timezone.utc)
                 )
                 db.session.add(conversation)
                 db.session.commit()
@@ -407,7 +410,7 @@ def latest_conversation():
                 conversation = Conversation(
                     user_id=user.id,
                     messages=[],
-                    created_at=datetime.now(timezone.utc)
+                    created_at=datetime.datetime.now(datetime.timezone.utc)
                 )
                 db.session.add(conversation)
                 db.session.commit()
@@ -418,7 +421,7 @@ def latest_conversation():
                 'id': str(uuid.uuid4()),
                 'text': data['message'],
                 'isUser': True,
-                'timestamp': datetime.now(timezone.utc).isoformat()
+                'timestamp': datetime.datetime.now(datetime.timezone.utc).isoformat()
             }
             conversation.messages.append(user_message)
             logger.debug(f"Added user message: {user_message}")
@@ -449,7 +452,7 @@ def latest_conversation():
                 'id': str(uuid.uuid4()),
                 'text': ai_response_text,
                 'isUser': False,
-                'timestamp': datetime.now(timezone.utc).isoformat()
+                'timestamp': datetime.datetime.now(datetime.timezone.utc).isoformat()
             }
             conversation.messages.append(ai_message)
             logger.debug(f"Added AI message: {ai_message}")
@@ -462,7 +465,7 @@ def latest_conversation():
                 if not audio_base64:
                     logger.warning("Failed to generate speech, proceeding without audio")
 
-            conversation.updated_at = datetime.now(timezone.utc)
+            conversation.updated_at = datetime.datetime.now(datetime.timezone.utc)
             from sqlalchemy.orm.attributes import flag_modified
             flag_modified(conversation, "messages")
             db.session.commit()

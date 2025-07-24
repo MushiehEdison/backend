@@ -53,19 +53,29 @@ def signup():
     try:
         data = request.get_json()
         logger.debug(f"Signup data received: {data}")
-        if not data or not all(k in data for k in ['name', 'email', 'password', 'language', 'gender']):
+        required_fields = ['name', 'username', 'email', 'password', 'phone', 'language', 'gender']
+        if not data or not all(k in data for k in required_fields):
             logger.error("Missing required fields")
             return jsonify({'message': 'Missing required fields'}), 400
 
+        # Check for existing email or username
         if User.query.filter_by(email=data['email']).first():
             logger.error("Email already exists")
             return jsonify({'message': 'Email already exists'}), 400
+        if User.query.filter_by(username=data['username']).first():
+            logger.error("Username already exists")
+            return jsonify({'message': 'Username already exists'}), 400
+        if User.query.filter_by(phone=data['phone']).first():
+            logger.error("Phone number already exists")
+            return jsonify({'message': 'Phone number already exists'}), 400
 
         hashed_password = bcrypt.generate_password_hash(data['password']).decode('utf-8')
         new_user = User(
             name=data['name'],
+            username=data['username'],  # Explicitly set username
             email=data['email'],
             password=hashed_password,
+            phone=data['phone'],  # Explicitly set phone
             language=data['language'],
             gender=data['gender']
         )
@@ -84,7 +94,9 @@ def signup():
             'user': {
                 'id': new_user.id,
                 'name': new_user.name,
+                'username': new_user.username,
                 'email': new_user.email,
+                'phone': new_user.phone,
                 'language': new_user.language,
                 'gender': new_user.gender
             }

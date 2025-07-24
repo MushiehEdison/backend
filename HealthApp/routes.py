@@ -180,7 +180,8 @@ def conversations():
 
         # Query conversations with messages, ordered by updated_at or created_at
         query = Conversation.query.filter_by(user_id=user.id)\
-            .filter(Conversation.messages != None, Conversation.messages != [])\
+            .filter(Conversation.messages != None)\
+            .filter(db.cast(Conversation.messages, db.Text) != '[]')\
             .order_by(Conversation.updated_at.desc().nullslast(), Conversation.created_at.desc())
 
         # Paginate the query

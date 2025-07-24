@@ -383,7 +383,7 @@ def latest_conversation():
                 conversation = Conversation(
                     user_id=user.id,
                     messages=[],
-                    created_at=datetime.datetime.now(datetime.timezone.utc)
+                    created_at=datetime.now(timezone.utc)
                 )
                 db.session.add(conversation)
                 db.session.commit()
@@ -397,15 +397,17 @@ def latest_conversation():
                     'audio': None
                 }), 200
 
+            # Use JSONB comparison for non-empty messages
             conversation = Conversation.query.filter_by(user_id=user.id)\
-                .filter(Conversation.messages != None, Conversation.messages != [])\
+                .filter(Conversation.messages != None)\
+                .filter(db.cast(Conversation.messages, db.Text) != '[]')\
                 .order_by(Conversation.updated_at.desc().nullslast(), Conversation.created_at.desc())\
                 .first()
             if not conversation:
                 conversation = Conversation(
                     user_id=user.id,
                     messages=[],
-                    created_at=datetime.datetime.now(datetime.timezone.utc)
+                    created_at=datetime.now(timezone.utc)
                 )
                 db.session.add(conversation)
                 db.session.commit()
@@ -416,7 +418,7 @@ def latest_conversation():
                 'id': str(uuid.uuid4()),
                 'text': data['message'],
                 'isUser': True,
-                'timestamp': datetime.datetime.now(datetime.timezone.utc).isoformat()
+                'timestamp': datetime.now(timezone.utc).isoformat()
             }
             conversation.messages.append(user_message)
             logger.debug(f"Added user message: {user_message}")
@@ -447,7 +449,7 @@ def latest_conversation():
                 'id': str(uuid.uuid4()),
                 'text': ai_response_text,
                 'isUser': False,
-                'timestamp': datetime.datetime.now(datetime.timezone.utc).isoformat()
+                'timestamp': datetime.now(timezone.utc).isoformat()
             }
             conversation.messages.append(ai_message)
             logger.debug(f"Added AI message: {ai_message}")
@@ -460,7 +462,7 @@ def latest_conversation():
                 if not audio_base64:
                     logger.warning("Failed to generate speech, proceeding without audio")
 
-            conversation.updated_at = datetime.datetime.now(datetime.timezone.utc)
+            conversation.updated_at = datetime.now(timezone.utc)
             from sqlalchemy.orm.attributes import flag_modified
             flag_modified(conversation, "messages")
             db.session.commit()

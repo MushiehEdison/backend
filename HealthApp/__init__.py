@@ -22,8 +22,7 @@ def create_app():
     try:
         db.init_app(app)
         bcrypt.init_app(app)
-        CORS(app, resources={r"/*": {"origins": "https://healia.netlify.app"}}, supports_credentials=True)
-        
+        CORS(auth_bp, origins=["http://localhost:5173", "https://healia.netlify.app"], supports_credentials=True)        
         from .routes import auth_bp
         app.register_blueprint(auth_bp)
         

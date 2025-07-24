@@ -13,10 +13,6 @@ from .speech import generate_tts_audio
 logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-@app.route('/', methods=['GET', 'HEAD'])
-def health_check():
-    return jsonify({'message': 'Server is running'}), 200
-
 
 # Initialize Blueprint
 auth_bp = Blueprint('auth', __name__, url_prefix='/api/auth')
@@ -46,6 +42,10 @@ def verify_user_from_token(auth_header):
     except Exception as e:
         logger.error(f"Error verifying token: {str(e)}")
         return None
+
+@auth_bp.route('/', methods=['GET', 'HEAD'])
+def health_check():
+    return jsonify({'message': 'Server is running'}), 200
 
 @auth_bp.route('/signup', methods=['POST'])
 def signup():

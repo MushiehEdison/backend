@@ -11,7 +11,7 @@ import difflib
 import uuid
 
 # Setup logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
 # Load environment variables
@@ -84,37 +84,37 @@ class ConversationMemory:
 # Global conversation memories
 conversation_memories = defaultdict(ConversationMemory)
 
-# Patterns for entity extraction
+# Patterns for entity extraction (expanded for French)
 SYMPTOM_PATTERNS = [
-    r'\b(pain|hurt|ache|sore|burning|throbbing|sharp|dull|cramping)\b',
-    r'\b(fever|temperature|hot|chills|sweating)\b',
-    r'\b(nausea|vomit|sick|dizzy|headache|migraine)\b',
-    r'\b(cough|sneeze|runny nose|congestion|sore throat)\b',
-    r'\b(tired|fatigue|exhausted|weak|energy)\b',
-    r'\b(sleep|insomnia|restless|nightmare)\b',
-    r'\b(appetite|eating|weight|stomach)\b',
-    r'\b(breathing|shortness|chest|heart)\b',
-    r'\b(skin|rash|itchy|red|swollen)\b',
-    r'\b(joint|muscle|back|neck|shoulder)\b'
+    r'\b(pain|hurt|ache|sore|burning|throbbing|sharp|dull|cramping|douleur|mal|brûlure|aigu|chronique)\b',
+    r'\b(fever|temperature|hot|chills|sweating|fièvre|température|chaud|froid|sueur)\b',
+    r'\b(nausea|vomit|sick|dizzy|headache|migraine|nausée|vomi|malade|vertige|mal de tête)\b',
+    r'\b(cough|sneeze|runny nose|congestion|sore throat|toux|éternuement|nez qui coule|gorge irritée)\b',
+    r'\b(tired|fatigue|exhausted|weak|energy|fatigué|épuisé|faible|énergie)\b',
+    r'\b(sleep|insomnia|restless|nightmare|sommeil|insomnie|agité|cauchemar)\b',
+    r'\b(appetite|eating|weight|stomach|appétit|manger|poids|estomac)\b',
+    r'\b(breathing|shortness|chest|heart|respiration|essoufflement|poitrine|cœur)\b',
+    r'\b(skin|rash|itchy|red|swollen|peau|éruption|démangeaison|rouge|gonflé)\b',
+    r'\b(joint|muscle|back|neck|shoulder|articulation|muscle|dos|cou|épaule)\b'
 ]
 
 CONDITION_PATTERNS = [
-    r'\b(diabetes|hypertension|blood pressure|sugar)\b',
-    r'\b(malaria|typhoid|cholera|yellow fever)\b',
-    r'\b(asthma|bronchitis|pneumonia|tuberculosis)\b',
-    r'\b(cancer|tumor|growth|lump)\b',
-    r'\b(depression|anxiety|stress|mental health)\b',
-    r'\b(pregnancy|pregnant|expecting|baby)\b',
-    r'\b(allergy|allergic|reaction)\b'
+    r'\b(diabetes|hypertension|blood pressure|sugar|diabète|hypertension|pression artérielle|sucre)\b',
+    r'\b(malaria|typhoid|cholera|yellow fever|paludisme|typhoïde|choléra|fièvre jaune)\b',
+    r'\b(asthma|bronchitis|pneumonia|tuberculosis|asthme|bronchite|pneumonie|tuberculose)\b',
+    r'\b(cancer|tumor|growth|lump|cancer|tumeur|croissance|masse)\b',
+    r'\b(depression|anxiety|stress|mental health|dépression|anxiété|stress|santé mentale)\b',
+    r'\b(pregnancy|pregnant|expecting|baby|grossesse|enceinte|bébé)\b',
+    r'\b(allergy|allergic|reaction|allergie|réaction)\b'
 ]
 
 EMOTIONAL_INDICATORS = {
-    'VERY_POSITIVE': r'\b(amazing|fantastic|wonderful|excellent|perfect|thrilled|ecstatic)\b',
-    'POSITIVE': r'\b(good|better|great|happy|pleased|glad|improving|recovering)\b',
-    'NEUTRAL': r'\b(okay|fine|normal|regular|usual|moderate)\b',
-    'CONCERNED': r'\b(worried|concerned|anxious|nervous|unsure|confused)\b',
-    'NEGATIVE': r'\b(bad|worse|terrible|awful|sick|ill|pain|hurt)\b',
-    'VERY_NEGATIVE': r'\b(horrible|unbearable|excruciating|devastating|hopeless|desperate)\b'
+    'VERY_POSITIVE': r'\b(amazing|fantastic|wonderful|excellent|perfect|thrilled|ecstatic|merveilleux|fantastique|excellent|parfait|enthousiaste)\b',
+    'POSITIVE': r'\b(good|better|great|happy|pleased|glad|improving|recovering|bon|meilleur|heureux|satisfait|amélioration)\b',
+    'NEUTRAL': r'\b(okay|fine|normal|regular|usual|moderate|d\'accord|normal|habituel|modéré)\b',
+    'CONCERNED': r'\b(worried|concerned|anxious|nervous|unsure|confused|inquiet|anxieux|nerveux|incertain|confus)\b',
+    'NEGATIVE': r'\b(bad|worse|terrible|awful|sick|ill|pain|hurt|mauvais|pire|terrible|malade|douleur)\b',
+    'VERY_NEGATIVE': r'\b(horrible|unbearable|excruciating|devastating|hopeless|desperate|horrible|insupportable|dévastateur|désespéré)\b'
 }
 
 # Load clinical dataset
@@ -161,13 +161,13 @@ def extract_entities(text):
         if matches:
             topics.add('medical_conditions')
 
-    if any(word in text_lower for word in ['diet', 'food', 'eat', 'nutrition']):
+    if any(word in text_lower for word in ['diet', 'food', 'eat', 'nutrition', 'alimentation', 'nourriture', 'manger']):
         topics.add('nutrition')
-    if any(word in text_lower for word in ['exercise', 'sport', 'physical', 'activity']):
+    if any(word in text_lower for word in ['exercise', 'sport', 'physical', 'activity', 'exercice', 'sport', 'physique', 'activité']):
         topics.add('physical_activity')
-    if any(word in text_lower for word in ['mental', 'stress', 'anxiety', 'depression']):
+    if any(word in text_lower for word in ['mental', 'stress', 'anxiety', 'depression', 'mental', 'stress', 'anxiété', 'dépression']):
         topics.add('mental_health')
-    if any(word in text_lower for word in ['medicine', 'medication', 'drug', 'treatment']):
+    if any(word in text_lower for word in ['medicine', 'medication', 'drug', 'treatment', 'médicament', 'traitement']):
         topics.add('medication')
 
     return topics, symptoms, conditions
@@ -219,7 +219,7 @@ def call_groq_api(messages, model="llama3-70b-8192", max_tokens=600, temperature
     """Call Grok API with improved error handling"""
     if not GROQ_API_KEY:
         logger.error("GROQ_API_KEY is not set in environment variables")
-        return None
+        return "Error: GROQ_API_KEY is not configured"
 
     headers = {
         "Authorization": f"Bearer {GROQ_API_KEY}",
@@ -234,8 +234,9 @@ def call_groq_api(messages, model="llama3-70b-8192", max_tokens=600, temperature
     }
 
     try:
-        logger.debug(f"Sending request to {GROQ_ENDPOINT} with model {model}")
+        logger.debug(f"Sending request to {GROQ_ENDPOINT} with model {model}, data: {json.dumps(data, indent=2)}")
         response = requests.post(GROQ_ENDPOINT, headers=headers, json=data, timeout=20, verify=True)
+        logger.debug(f"Received response status: {response.status_code}, text: {response.text[:200]}...")
         response.raise_for_status()
         result = response.json()
         if 'choices' in result and result['choices']:
@@ -243,16 +244,16 @@ def call_groq_api(messages, model="llama3-70b-8192", max_tokens=600, temperature
             logger.info("Successfully received response from Grok API")
             return content
         logger.warning("No valid choices in API response")
-        return None
+        return "Error: No valid response from AI service"
     except requests.exceptions.HTTPError as http_err:
         logger.error(f"HTTP error occurred: {http_err}, Response: {response.text if response else 'No response'}")
-        return None
+        return f"Error: HTTP error from AI service: {response.status_code if response else 'Unknown'}"
     except requests.exceptions.RequestException as req_err:
         logger.error(f"Request error occurred: {req_err}")
-        return None
+        return "Error: Unable to connect to AI service"
     except Exception as e:
         logger.error(f"Unexpected error: {str(e)}")
-        return None
+        return f"Error: Unexpected issue with AI service: {str(e)}"
 
 def build_system_prompt(patient_info, context, emotional_state, language):
     """Build dynamic system prompt for AI"""
@@ -284,7 +285,7 @@ def build_system_prompt(patient_info, context, emotional_state, language):
 - Progression émotionnelle : {', '.join(emotional_trend[-3:]) if emotional_trend else 'Aucune'}
 
 **Instructions** :
-1. Répondez de manière naturelle, empathique et culturellement adaptée au Cameroun.
+1. Répondez uniquement en français, de manière naturelle, empathique et culturellement adaptée au Cameroun.
 2. Utilisez un ton conversationnel, avec des emojis pour exprimer l'empathie (😊, 😔, 🤗, 🙏).
 3. Construisez sur l'historique de la conversation, en évitant les répétitions.
 4. Si des données cliniques sont fournies, utilisez-les uniquement si elles sont pertinentes.
@@ -309,7 +310,7 @@ def build_system_prompt(patient_info, context, emotional_state, language):
 - Emotional progression: {', '.join(emotional_trend[-3:]) if emotional_trend else 'None'}
 
 **Instructions**:
-1. Respond naturally, empathetically, and in a culturally appropriate manner for Cameroon.
+1. Respond only in English, naturally, empathetically, and in a culturally appropriate manner for Cameroon.
 2. Use a conversational tone, incorporating emojis to express empathy (😊, 😔, 🤗, 🙏).
 3. Build on the conversation history, avoiding repetition.
 4. Use clinical data only if relevant to the mentioned symptoms or conditions.
@@ -321,7 +322,10 @@ def build_system_prompt(patient_info, context, emotional_state, language):
 def generate_personalized_response(user_input, patient_info, session_id="default", history=None):
     """Generate AI-driven, context-aware response"""
     if not user_input or not patient_info:
-        return "I need more information to assist you properly. Could you share more details? 😊"
+        lang = patient_info.get('language', 'en') if patient_info else 'en'
+        error_msg = "Je besoin de plus d'informations pour vous aider correctement. Pouvez-vous partager plus de détails ? 😊" if lang == "fr" else "I need more information to assist you properly. Could you share more details? 😊"
+        logger.warning(f"Invalid input or patient info, returning: {error_msg}")
+        return error_msg
 
     memory = conversation_memories[session_id]
     memory.user_preferences["language"] = patient_info.get('language', 'en')
@@ -345,10 +349,10 @@ def generate_personalized_response(user_input, patient_info, session_id="default
 
     # Build prompt
     system_prompt = build_system_prompt(patient_info, context, emotional_state, memory.user_preferences["language"])
-    conversation_history = "\n".join([f"{'User' if msg['is_user'] else 'Assistant'}: {msg['text']}" for msg in context['recent_messages'][-5:]])
-    dataset_context = "\n".join([f"Case {i}: {r['diagnosis']} - {r['summary']}" for i, r in enumerate(dataset_records, 1)]) if dataset_records else "No relevant clinical data."
-    
-    full_prompt = f"{conversation_history}\n\nUser: {user_input}\n\nRelevant Clinical Data: {dataset_context}"
+    conversation_history = "\n".join([f"{'Utilisateur' if msg['is_user'] else 'Assistant' if memory.user_preferences['language'] == 'fr' else 'User' if msg['is_user'] else 'Assistant'}: {msg['text']}" for msg in context['recent_messages'][-5:]])
+    dataset_context = "\n".join([f"{'Cas' if memory.user_preferences['language'] == 'fr' else 'Case'} {i}: {r['diagnosis']} - {r['summary']}" for i, r in enumerate(dataset_records, 1)]) if dataset_records else "Aucune donnée clinique pertinente." if memory.user_preferences["language"] == "fr" else "No relevant clinical data."
+
+    full_prompt = f"{conversation_history}\n\n{'Utilisateur' if memory.user_preferences['language'] == 'fr' else 'User'}: {user_input}\n\n{'Données cliniques pertinentes' if memory.user_preferences['language'] == 'fr' else 'Relevant Clinical Data'}: {dataset_context}"
 
     # Call Grok API
     messages = [
@@ -357,13 +361,12 @@ def generate_personalized_response(user_input, patient_info, session_id="default
     ]
     response = call_groq_api(messages)
 
-    if response:
+    if response and not response.startswith("Error:"):
         memory.add_message(response, is_user=False, sentiment="EMPATHETIC")
         logger.info(f"Generated AI response: {response[:100]}...")
         return response
 
-    # Fallback: Construct minimal response with context
-    name = patient_info.get('name', 'Patient')
+    # Fallback response in user's language
     lang = memory.user_preferences["language"]
     fallback = f"{'Je suis désolé, je rencontre un problème technique.' if lang == 'fr' else 'I’m sorry, I’m unable to connect to the AI service at the moment.'} "
     if symptoms:
@@ -376,35 +379,48 @@ def generate_personalized_response(user_input, patient_info, session_id="default
 def test_conversation_flow():
     """Test the AI-driven conversation system"""
     print("🧪 Testing AI Medical Assistant\n")
-    test_patient = {
-        'name': 'Marie Ngozi',
-        'age': 28,
-        'language': 'en',
-        'region': 'Douala',
-        'chronic_conditions': 'None'
-    }
+    test_patients = [
+        {
+            'name': 'Marie Ngozi',
+            'age': 28,
+            'language': 'en',
+            'region': 'Douala',
+            'chronic_conditions': 'None'
+        },
+        {
+            'name': 'Jean Dupont',
+            'age': 35,
+            'language': 'fr',
+            'region': 'Yaoundé',
+            'chronic_conditions': 'Hypertension'
+        }
+    ]
     test_conversations = [
-        "I'm having headaches lately",
-        "It's worse in the evenings and I feel nauseous",
-        "I’m feeling a bit better today, but still worried",
-        "Thank you for your help!"
+        ("I'm having headaches lately", "J'ai des maux de tête récemment"),
+        ("It's worse in the evenings and I feel nauseous", "C'est pire le soir et je me sens nauséeux"),
+        ("I’m feeling a bit better today, but still worried", "Je me sens un peu mieux aujourd'hui, mais toujours inquiet"),
+        ("Thank you for your help!", "Merci pour votre aide !")
     ]
     session_id = "test_session"
 
-    print("📱 Conversation Simulation:")
-    print("=" * 50)
-    for i, message in enumerate(test_conversations, 1):
-        print(f"\n👤 User (Message {i}): {message}")
-        response = generate_personalized_response(message, test_patient, session_id, [])
-        print(f"🤖 Dr. Healia: {response}")
-        print("-" * 30)
+    for patient in test_patients:
+        lang = patient['language']
+        print(f"\n📱 Conversation Simulation ({'English' if lang == 'en' else 'French'}):")
+        print("=" * 50)
+        conversation_memories[session_id] = ConversationMemory()  # Reset memory
+        for i, (en_msg, fr_msg) in enumerate(test_conversations, 1):
+            message = fr_msg if lang == "fr" else en_msg
+            print(f"\n👤 {'Utilisateur' if lang == 'fr' else 'User'} (Message {i}): {message}")
+            response = generate_personalized_response(message, patient, session_id, [])
+            print(f"🤖 Dr. Healia: {response}")
+            print("-" * 30)
 
-    memory = conversation_memories[session_id]
-    print(f"\n🧠 Conversation Memory Summary:")
-    print(f"Total messages: {len(memory.messages)}")
-    print(f"Symptoms: {memory.mentioned_symptoms}")
-    print(f"Emotional progression: {[e['sentiment'] for e in memory.emotional_state_history]}")
-    print(f"Topics: {memory.topics_discussed}")
+        memory = conversation_memories[session_id]
+        print(f"\n🧠 Conversation Memory Summary ({'English' if lang == 'en' else 'French'}):")
+        print(f"Total messages: {len(memory.messages)}")
+        print(f"Symptoms: {memory.mentioned_symptoms}")
+        print(f"Emotional progression: {[e['sentiment'] for e in memory.emotional_state_history]}")
+        print(f"Topics: {memory.topics_discussed}")
 
 if __name__ == "__main__":
     test_conversation_flow()

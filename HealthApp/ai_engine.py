@@ -84,7 +84,7 @@ class ConversationMemory:
 # Global conversation memories
 conversation_memories = defaultdict(ConversationMemory)
 
-# Patterns for entity extraction (expanded for French)
+# Patterns for entity extraction (supporting French and English)
 SYMPTOM_PATTERNS = [
     r'\b(pain|hurt|ache|sore|burning|throbbing|sharp|dull|cramping|douleur|mal|brûlure|aigu|chronique)\b',
     r'\b(fever|temperature|hot|chills|sweating|fièvre|température|chaud|froid|sueur)\b',
@@ -117,6 +117,15 @@ EMOTIONAL_INDICATORS = {
     'VERY_NEGATIVE': r'\b(horrible|unbearable|excruciating|devastating|hopeless|desperate|horrible|insupportable|dévastateur|désespéré)\b'
 }
 
+# French-specific words for language detection
+FRENCH_INDICATORS = [
+    'je', 'tu', 'il', 'elle', 'nous', 'vous', 'ils', 'elles', 'le', 'la', 'l\'', 'les',
+    'un', 'une', 'des', 'et', 'à', 'de', 'est', 'suis', 'es', 'ai', 'as', 'a', 'ce', 'cette',
+    'ça', 'pour', 'avec', 'sur', 'dans', 'par', 'mais', 'ou', 'si', 'quand', 'je', 'ne', 'pas',
+    'plus', 'moins', 'très', 'bien', 'merci', 'bonjour', 'au', 'aux', 'd\'', 'du', 'douleur',
+    'mal', 'fièvre', 'toux', 'fatigué', 'nausée', 'vertige', 'malade'
+]
+
 # Load clinical dataset
 DATASET_PATH = os.path.join(os.path.dirname(__file__), "clinical_summaries.csv")
 dataset_df = pd.DataFrame()
@@ -129,11 +138,12 @@ try:
         'heart_rate', 'summary_text', 'date_recorded'
     ])
     for idx, row in dataset_df.iterrows():
-        diagnosis = str(row['diagnosis']).lower()
-        summary = str(row['summary_text']).lower()
-        if diagnosis not in dataset_index:
-            dataset_index[diagnosis] = []
-        dataset_index[diagnosis].append(idx)
+        diagnosis = str(row.get('diagnosis', '')).lower()
+        summary = str(row.get('summary_text', '')).lower()
+        if diagnosis and diagnosis.strip():
+            if diagnosis not in dataset_index:
+                dataset_index[diagnosis] = []
+            dataset_index[diagnosis].append(idx)
         words = re.findall(r'\b\w+\b', summary)
         for word in words:
             if len(word) > 3:
@@ -144,8 +154,26 @@ try:
 except Exception as e:
     logger.error(f"Error loading dataset: {e}")
 
+def detect_language(text):
+    """Detect if the input text is French or English"""
+    if not text or not isinstance(text, str):
+        return "en"  # Default to English if text is empty or invalid
+
+    text_lower = text.lower().strip()
+    words = re.findall(r'\b\w+\b', text_lower)
+    
+    if not words:
+        return "en"  # Default to English for empty word list
+
+    french_count = sum(1 for word in words if word in FRENCH_INDICATORS)
+    french_ratio = french_count / len(words)
+
+    logger.debug(f"Language detection: French words: {french_count}/{len(words)} (Ratio: {french_ratio:.2f})")
+    
+    return "fr" if french_ratio >= 0.3 else "en"
+
 def extract_entities(text):
-    """Extract symptoms, conditions, and topics from user input"""
+    """Extract symptoms, conditions, and topics from text"""
     topics, symptoms, conditions = set(), set(), set()
     text_lower = text.lower()
 
@@ -216,7 +244,7 @@ def query_dataset(symptoms, conditions, max_records=3):
     return records
 
 def call_groq_api(messages, model="llama3-70b-8192", max_tokens=600, temperature=0.8):
-    """Call Grok API with improved error handling"""
+    """Call Grok API with improved error handling and timeout"""
     if not GROQ_API_KEY:
         logger.error("GROQ_API_KEY is not set in environment variables")
         return "Error: GROQ_API_KEY is not configured"
@@ -235,7 +263,7 @@ def call_groq_api(messages, model="llama3-70b-8192", max_tokens=600, temperature
 
     try:
         logger.debug(f"Sending request to {GROQ_ENDPOINT} with model {model}, data: {json.dumps(data, indent=2)}")
-        response = requests.post(GROQ_ENDPOINT, headers=headers, json=data, timeout=20, verify=True)
+        response = requests.post(GROQ_ENDPOINT, headers=headers, json=data, timeout=10)
         logger.debug(f"Received response status: {response.status_code}, text: {response.text[:200]}...")
         response.raise_for_status()
         result = response.json()
@@ -245,6 +273,9 @@ def call_groq_api(messages, model="llama3-70b-8192", max_tokens=600, temperature
             return content
         logger.warning("No valid choices in API response")
         return "Error: No valid response from AI service"
+    except requests.exceptions.Timeout:
+        logger.error("Request to Grok API timed out")
+        return "Error: Request to AI service timed out"
     except requests.exceptions.HTTPError as http_err:
         logger.error(f"HTTP error occurred: {http_err}, Response: {response.text if response else 'No response'}")
         return f"Error: HTTP error from AI service: {response.status_code if response else 'Unknown'}"
@@ -274,7 +305,7 @@ def build_system_prompt(patient_info, context, emotional_state, language):
 - Nom : {name}
 - Âge : {age} ans
 - Région : {region}
-- Langue : Français
+- Langue : Français (détectée à partir de l'entrée utilisateur)
 
 **Contexte de la conversation** :
 - Messages récents : {len(recent_messages)} échanges
@@ -299,7 +330,7 @@ def build_system_prompt(patient_info, context, emotional_state, language):
 - Name: {name}
 - Age: {age} years
 - Region: {region}
-- Language: English
+- Language: English (detected from user input)
 
 **Conversation Context**:
 - Recent messages: {len(recent_messages)} exchanges
@@ -320,15 +351,19 @@ def build_system_prompt(patient_info, context, emotional_state, language):
     return prompt
 
 def generate_personalized_response(user_input, patient_info, session_id="default", history=None):
-    """Generate AI-driven, context-aware response"""
+    """Generate AI-driven, context-aware response in the detected language"""
     if not user_input or not patient_info:
-        lang = patient_info.get('language', 'en') if patient_info else 'en'
-        error_msg = "Je besoin de plus d'informations pour vous aider correctement. Pouvez-vous partager plus de détails ? 😊" if lang == "fr" else "I need more information to assist you properly. Could you share more details? 😊"
+        default_lang = patient_info.get('language', 'en') if patient_info else 'en'
+        error_msg = "J'ai besoin de plus d'informations pour vous aider correctement. Pouvez-vous partager plus de détails ? 😊" if default_lang == "fr" else "I need more information to assist you properly. Could you share more details? 😊"
         logger.warning(f"Invalid input or patient info, returning: {error_msg}")
         return error_msg
 
     memory = conversation_memories[session_id]
-    memory.user_preferences["language"] = patient_info.get('language', 'en')
+    
+    # Detect language from user input, fallback to login preference
+    detected_lang = detect_language(user_input)
+    memory.user_preferences["language"] = detected_lang
+    logger.debug(f"Detected language: {detected_lang}, user input: {user_input}")
 
     # Initialize memory with database history if provided
     if history:
@@ -366,7 +401,7 @@ def generate_personalized_response(user_input, patient_info, session_id="default
         logger.info(f"Generated AI response: {response[:100]}...")
         return response
 
-    # Fallback response in user's language
+    # Fallback response in detected language
     lang = memory.user_preferences["language"]
     fallback = f"{'Je suis désolé, je rencontre un problème technique.' if lang == 'fr' else 'I’m sorry, I’m unable to connect to the AI service at the moment.'} "
     if symptoms:
@@ -405,18 +440,23 @@ def test_conversation_flow():
 
     for patient in test_patients:
         lang = patient['language']
-        print(f"\n📱 Conversation Simulation ({'English' if lang == 'en' else 'French'}):")
+        print(f"\n📱 Conversation Simulation (Login preference: {'English' if lang == 'en' else 'French'}):")
         print("=" * 50)
-        conversation_memories[session_id] = ConversationMemory()  # Reset memory
-        for i, (en_msg, fr_msg) in enumerate(test_conversations, 1):
-            message = fr_msg if lang == "fr" else en_msg
-            print(f"\n👤 {'Utilisateur' if lang == 'fr' else 'User'} (Message {i}): {message}")
+        conversation_memories[session_id] = ConversationMemory()
+        test_inputs = [
+            test_conversations[0][1 if patient['language'] == 'en' else 0],
+            test_conversations[1][0 if patient['language'] == 'fr' else 1],
+            test_conversations[2][1 if patient['language'] == 'en' else 0],
+            test_conversations[3][0 if patient['language'] == 'fr' else 1]
+        ]
+        for i, message in enumerate(test_inputs, 1):
+            print(f"\n👤 {'Utilisateur' if detect_language(message) == 'fr' else 'User'} (Message {i}): {message}")
             response = generate_personalized_response(message, patient, session_id, [])
             print(f"🤖 Dr. Healia: {response}")
             print("-" * 30)
 
         memory = conversation_memories[session_id]
-        print(f"\n🧠 Conversation Memory Summary ({'English' if lang == 'en' else 'French'}):")
+        print(f"\n🧠 Conversation Memory Summary:")
         print(f"Total messages: {len(memory.messages)}")
         print(f"Symptoms: {memory.mentioned_symptoms}")
         print(f"Emotional progression: {[e['sentiment'] for e in memory.emotional_state_history]}")

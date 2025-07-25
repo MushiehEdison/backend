@@ -23,13 +23,13 @@ def generate_tts_audio(text, user_id, conversation_id, language="en"):
         logger.error("Invalid or empty text input for TTS")
         return None
 
-    # Select voice based on language (default to Bella for English, Ariane for French)
+    # Select voice based on language
     voice_map = {
         "en": "21m00Tcm4TlvDq8ikWAM",  # Bella: Natural, young female voice
         "fr": "flq6f7yk4E4fJM5XTYuZ"   # Ariane: Natural French female voice
     }
     voice_id = voice_map.get(language, voice_map["en"])
-    logger.debug(f"Selected voice_id: {voice_id} for language: {language}, text: {text}")
+    logger.debug(f"Selected voice_id: {voice_id} for language: {language}, text: {text[:50]}...")
 
     headers = {
         "xi-api-key": api_key,
@@ -60,8 +60,8 @@ def generate_tts_audio(text, user_id, conversation_id, language="en"):
             return None
 
         audio_content = response.content
-        if not audio_content:
-            logger.error("No audio content received from Eleven Labs API")
+        if not audio_content or len(audio_content) < 100:  # Basic size check
+            logger.error("Invalid or empty audio content received from Eleven Labs API")
             return None
 
         # Ensure audio directory exists
@@ -80,7 +80,7 @@ def generate_tts_audio(text, user_id, conversation_id, language="en"):
             logger.error("Failed to encode audio to base64")
             return None
 
-        logger.debug("Generated base64 audio successfully")
+        logger.debug(f"Generated base64 audio, length: {len(audio_base64)}")
         return audio_base64
 
     except requests.exceptions.Timeout:

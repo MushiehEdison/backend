@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 
 # Initialize Blueprint
 auth_bp = Blueprint('auth', __name__, url_prefix='/api/auth')
-CORS(auth_bp, origins=["http://localhost:5173", "https://healia.netlify.app"], supports_credentials=True)
+CORS(auth_bp, origins=["https://healia.netlify.app"], supports_credentials=True)
 
 def verify_user_from_token(auth_header):
     """Verify user from JWT token in Authorization header."""

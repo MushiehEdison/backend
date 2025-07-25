@@ -27,7 +27,7 @@ def verify_user_from_token(auth_header):
     if not auth_header.startswith('Bearer '):
         logger.error(f"Invalid Authorization header format: {auth_header}")
         return None
-    token = auth_header.split(' ')[1].strip()  # Strip whitespace
+    token = auth_header.split(' ')[1].strip()
     if not token:
         logger.error("Token is empty after splitting Authorization header")
         return None
@@ -174,17 +174,14 @@ def conversations():
         return jsonify({'message': 'Invalid or missing token'}), 401
 
     try:
-        # Get pagination parameters
         page = int(request.args.get('page', 1))
         per_page = int(request.args.get('per_page', 10))
 
-        # Query conversations with messages, ordered by updated_at or created_at
         query = Conversation.query.filter_by(user_id=user.id)\
             .filter(Conversation.messages != None)\
             .filter(db.cast(Conversation.messages, db.Text) != '[]')\
             .order_by(Conversation.updated_at.desc().nullslast(), Conversation.created_at.desc())
 
-        # Paginate the query
         paginated_conversations = query.paginate(page=page, per_page=per_page, error_out=False)
         conversations = paginated_conversations.items
         total = paginated_conversations.total
@@ -288,13 +285,21 @@ def conversation(conversation_id):
                 'lifestyle': getattr(user.medical_profile, 'lifestyle', {})
             }
 
-            logger.debug(f"Calling generate_personalized_response with session_id: {session_id}")
+            logger.debug(f"Calling generate_personalized_response with session_id: {session_id}, message: {data['message']}")
             ai_response_text = generate_personalized_response(data['message'], patient_info, session_id, conversation.messages)
             logger.debug(f"AI response received: {ai_response_text}")
 
             if ai_response_text.startswith("Error:"):
                 logger.error(f"AI response error: {ai_response_text}")
-                return jsonify({'message': ai_response_text}), 500
+                ai_response_text = "I'm sorry, I couldn't process your request due to an issue with the AI service. Please try again later."
+                audio_base64 = None
+            else:
+                audio_base64 = None
+                if is_mic_input:
+                    language = patient_info.get('language', 'en')
+                    audio_base64 = generate_tts_audio(ai_response_text, user.id, conversation.id, language)
+                    if not audio_base64:
+                        logger.warning("Failed to generate speech, proceeding without audio")
 
             ai_message = {
                 'id': str(uuid.uuid4()),
@@ -304,14 +309,6 @@ def conversation(conversation_id):
             }
             conversation.messages.append(ai_message)
             logger.debug(f"Added AI message: {ai_message}")
-
-            # Generate speech for mic-based inputs
-            audio_base64 = None
-            if is_mic_input:
-                language = patient_info.get('language', 'en')
-                audio_base64 = generate_tts_audio(ai_response_text, user.id, conversation.id, language)
-                if not audio_base64:
-                    logger.warning("Failed to generate speech, proceeding without audio")
 
             conversation.updated_at = datetime.datetime.now(datetime.timezone.utc)
             from sqlalchemy.orm.attributes import flag_modified
@@ -382,7 +379,6 @@ def latest_conversation():
                 return jsonify({'message': 'Message is required'}), 400
 
             is_mic_input = data.get('isMicInput', False)
-            # Handle empty message for new conversation (New Chat)
             if data['message'] == '':
                 conversation = Conversation(
                     user_id=user.id,
@@ -401,7 +397,6 @@ def latest_conversation():
                     'audio': None
                 }), 200
 
-            # Use JSONB comparison for non-empty messages
             conversation = Conversation.query.filter_by(user_id=user.id)\
                 .filter(Conversation.messages != None)\
                 .filter(db.cast(Conversation.messages, db.Text) != '[]')\
@@ -441,13 +436,21 @@ def latest_conversation():
                 'lifestyle': getattr(user.medical_profile, 'lifestyle', {})
             }
 
-            logger.debug(f"Calling generate_personalized_response with session_id: {session_id}")
+            logger.debug(f"Calling generate_personalized_response with session_id: {session_id}, message: {data['message']}")
             ai_response_text = generate_personalized_response(data['message'], patient_info, session_id, conversation.messages)
             logger.debug(f"AI response received: {ai_response_text}")
 
             if ai_response_text.startswith("Error:"):
                 logger.error(f"AI response error: {ai_response_text}")
-                return jsonify({'message': ai_response_text}), 500
+                ai_response_text = "I'm sorry, I couldn't process your request due to an issue with the AI service. Please try again later."
+                audio_base64 = None
+            else:
+                audio_base64 = None
+                if is_mic_input:
+                    language = patient_info.get('language', 'en')
+                    audio_base64 = generate_tts_audio(ai_response_text, user.id, conversation.id, language)
+                    if not audio_base64:
+                        logger.warning("Failed to generate speech, proceeding without audio")
 
             ai_message = {
                 'id': str(uuid.uuid4()),
@@ -457,14 +460,6 @@ def latest_conversation():
             }
             conversation.messages.append(ai_message)
             logger.debug(f"Added AI message: {ai_message}")
-
-            # Generate speech for mic-based inputs
-            audio_base64 = None
-            if is_mic_input:
-                language = patient_info.get('language', 'en')
-                audio_base64 = generate_tts_audio(ai_response_text, user.id, conversation.id, language)
-                if not audio_base64:
-                    logger.warning("Failed to generate speech, proceeding without audio")
 
             conversation.updated_at = datetime.datetime.now(datetime.timezone.utc)
             from sqlalchemy.orm.attributes import flag_modified

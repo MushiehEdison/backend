@@ -14,7 +14,6 @@ def create_app():
     app = Flask(__name__)
     load_dotenv()
     app.config['SECRET_KEY'] = os.getenv('SECRET_KEY')
-    # Use PostgreSQL DATABASE_URL from environment variables
     app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv('DATABASE_URL')
     app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
     logging.debug(f"Database URI: {app.config['SQLALCHEMY_DATABASE_URI']}")
@@ -22,12 +21,19 @@ def create_app():
     try:
         db.init_app(app)
         bcrypt.init_app(app)
-        CORS(app, resources={r"/*": {"origins": "https://healia.netlify.app"}}, supports_credentials=True)
+        # Configure CORS globally for all routes
+        CORS(app, resources={
+            r"/api/*": {
+                "origins": ["https://healia.netlify.app", "http://localhost:5173"],
+                "methods": ["GET", "POST", "OPTIONS"],
+                "allow_headers": ["Content-Type", "Authorization"],
+                "supports_credentials": True
+            }
+        })
         
         from .routes import auth_bp
         app.register_blueprint(auth_bp)
         
-        # Create database tables if they don't exist
         with app.app_context():
             db.create_all()
             logging.info("Database tables created successfully")

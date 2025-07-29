@@ -1,5 +1,4 @@
 from flask import Blueprint, request, jsonify, current_app
-from flask_cors import CORS
 import jwt
 import datetime
 from datetime import timezone
@@ -16,7 +15,14 @@ logger = logging.getLogger(__name__)
 
 # Initialize Blueprint
 auth_bp = Blueprint('auth', __name__, url_prefix='/api/auth')
-CORS(auth_bp, origins=["http://localhost:5173", "https://healia.netlify.app"], supports_credentials=True)
+
+# Catch-all OPTIONS route for all /api/auth/* endpoints
+@auth_bp.route('/<path:path>', methods=['OPTIONS'])
+@auth_bp.route('/', methods=['OPTIONS'])
+def handle_options(path=None):
+    """Handle preflight OPTIONS requests for all auth routes."""
+    logger.debug(f"Handling OPTIONS request for path: {path or '/'}")
+    return jsonify({}), 200
 
 def verify_user_from_token(auth_header):
     """Verify user from JWT token in Authorization header."""
@@ -86,7 +92,7 @@ def signup():
 
         token = jwt.encode({
             'user_id': new_user.id,
-            'exp': datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(days=1)
+            'exp': datetime.datetime.now(timezone.utc) + datetime.timedelta(days=1)
         }, current_app.config['SECRET_KEY'], algorithm='HS256')
 
         return jsonify({
@@ -125,7 +131,7 @@ def signin():
 
         token = jwt.encode({
             'user_id': user.id,
-            'exp': datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(days=1)
+            'exp': datetime.datetime.now(timezone.utc) + datetime.timedelta(days=1)
         }, current_app.config['SECRET_KEY'], algorithm='HS256')
 
         logger.debug(f"User signed in: {user.id}")
@@ -220,8 +226,8 @@ def conversation(conversation_id):
             logger.debug(f"Conversation {conversation_id} not found")
             return jsonify({
                 'id': conversation_id,
-                'created_at': datetime.datetime.now(datetime.timezone.utc).isoformat(),
-                'updated_at': datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                'created_at': datetime.datetime.now(timezone.utc).isoformat(),
+                'updated_at': datetime.datetime.now(timezone.utc).isoformat(),
                 'messages': [],
                 'preview': 'No messages yet'
             }), 200
@@ -253,7 +259,7 @@ def conversation(conversation_id):
                     id=conversation_id,
                     user_id=user.id,
                     messages=[],
-                    created_at=datetime.datetime.now(datetime.timezone.utc)
+                    created_at=datetime.datetime.now(timezone.utc)
                 )
                 db.session.add(conversation)
                 logger.debug(f"Created new conversation with ID: {conversation_id}")
@@ -266,7 +272,7 @@ def conversation(conversation_id):
                 'id': str(uuid.uuid4()),
                 'text': data['message'],
                 'isUser': True,
-                'timestamp': datetime.datetime.now(datetime.timezone.utc).isoformat()
+                'timestamp': datetime.datetime.now(timezone.utc).isoformat()
             }
             conversation.messages.append(user_message)
             logger.debug(f"Added user message: {user_message}")
@@ -286,35 +292,45 @@ def conversation(conversation_id):
             }
 
             logger.debug(f"Calling generate_personalized_response with session_id: {session_id}, message: {data['message']}")
-            ai_response_text = generate_personalized_response(data['message'], patient_info, session_id, conversation.messages)
-            logger.debug(f"AI response received: {ai_response_text}")
-
-            if ai_response_text.startswith("Error:"):
-                logger.error(f"AI response error: {ai_response_text}")
+            try:
+                ai_response_text = generate_personalized_response(data['message'], patient_info, session_id, conversation.messages)
+            except Exception as ai_error:
+                logger.error(f"Error in generate_personalized_response: {str(ai_error)}")
                 ai_response_text = "I'm sorry, I couldn't process your request due to an issue with the AI service. Please try again later."
                 audio_base64 = None
             else:
                 audio_base64 = None
                 if is_mic_input:
                     language = patient_info.get('language', 'en')
-                    audio_base64 = generate_tts_audio(ai_response_text, user.id, conversation.id, language)
-                    if not audio_base64:
+                    try:
+                        audio_base64 = generate_tts_audio(ai_response_text, user.id, conversation.id, language)
+                    except Exception as tts_error:
+                        logger.error(f"Error generating TTS audio: {str(tts_error)}")
+                        audio_base64 = None
                         logger.warning("Failed to generate speech, proceeding without audio")
+
+            logger.debug(f"AI response received: {ai_response_text[:100]}...")
 
             ai_message = {
                 'id': str(uuid.uuid4()),
                 'text': ai_response_text,
                 'isUser': False,
-                'timestamp': datetime.datetime.now(datetime.timezone.utc).isoformat()
+                'timestamp': datetime.datetime.now(timezone.utc).isoformat()
             }
             conversation.messages.append(ai_message)
             logger.debug(f"Added AI message: {ai_message}")
 
-            conversation.updated_at = datetime.datetime.now(datetime.timezone.utc)
+            conversation.updated_at = datetime.datetime.now(timezone.utc)
             from sqlalchemy.orm.attributes import flag_modified
             flag_modified(conversation, "messages")
-            db.session.commit()
-            logger.debug(f"Conversation saved, message count: {len(conversation.messages)}")
+            try:
+                db.session.commit()
+                logger.debug(f"Conversation saved, message count: {len(conversation.messages)}")
+            except Exception as db_error:
+                logger.error(f"Database commit error: {str(db_error)}")
+                db.session.rollback()
+                return jsonify({'message': f'Error saving conversation: {str(db_error)}'}), 500
+
             response = {
                 'id': conversation.id,
                 'created_at': conversation.created_at.isoformat(),
@@ -383,7 +399,7 @@ def latest_conversation():
                 conversation = Conversation(
                     user_id=user.id,
                     messages=[],
-                    created_at=datetime.datetime.now(datetime.timezone.utc)
+                    created_at=datetime.datetime.now(timezone.utc)
                 )
                 db.session.add(conversation)
                 db.session.commit()
@@ -406,7 +422,7 @@ def latest_conversation():
                 conversation = Conversation(
                     user_id=user.id,
                     messages=[],
-                    created_at=datetime.datetime.now(datetime.timezone.utc)
+                    created_at=datetime.datetime.now(timezone.utc)
                 )
                 db.session.add(conversation)
                 db.session.commit()
@@ -417,7 +433,7 @@ def latest_conversation():
                 'id': str(uuid.uuid4()),
                 'text': data['message'],
                 'isUser': True,
-                'timestamp': datetime.datetime.now(datetime.timezone.utc).isoformat()
+                'timestamp': datetime.datetime.now(timezone.utc).isoformat()
             }
             conversation.messages.append(user_message)
             logger.debug(f"Added user message: {user_message}")
@@ -437,35 +453,45 @@ def latest_conversation():
             }
 
             logger.debug(f"Calling generate_personalized_response with session_id: {session_id}, message: {data['message']}")
-            ai_response_text = generate_personalized_response(data['message'], patient_info, session_id, conversation.messages)
-            logger.debug(f"AI response received: {ai_response_text}")
-
-            if ai_response_text.startswith("Error:"):
-                logger.error(f"AI response error: {ai_response_text}")
+            try:
+                ai_response_text = generate_personalized_response(data['message'], patient_info, session_id, conversation.messages)
+            except Exception as ai_error:
+                logger.error(f"Error in generate_personalized_response: {str(ai_error)}")
                 ai_response_text = "I'm sorry, I couldn't process your request due to an issue with the AI service. Please try again later."
                 audio_base64 = None
             else:
                 audio_base64 = None
                 if is_mic_input:
                     language = patient_info.get('language', 'en')
-                    audio_base64 = generate_tts_audio(ai_response_text, user.id, conversation.id, language)
-                    if not audio_base64:
+                    try:
+                        audio_base64 = generate_tts_audio(ai_response_text, user.id, conversation.id, language)
+                    except Exception as tts_error:
+                        logger.error(f"Error generating TTS audio: {str(tts_error)}")
+                        audio_base64 = None
                         logger.warning("Failed to generate speech, proceeding without audio")
+
+            logger.debug(f"AI response received: {ai_response_text[:100]}...")
 
             ai_message = {
                 'id': str(uuid.uuid4()),
                 'text': ai_response_text,
                 'isUser': False,
-                'timestamp': datetime.datetime.now(datetime.timezone.utc).isoformat()
+                'timestamp': datetime.datetime.now(timezone.utc).isoformat()
             }
             conversation.messages.append(ai_message)
             logger.debug(f"Added AI message: {ai_message}")
 
-            conversation.updated_at = datetime.datetime.now(datetime.timezone.utc)
+            conversation.updated_at = datetime.datetime.now(timezone.utc)
             from sqlalchemy.orm.attributes import flag_modified
             flag_modified(conversation, "messages")
-            db.session.commit()
-            logger.debug(f"Conversation saved, message count: {len(conversation.messages)}")
+            try:
+                db.session.commit()
+                logger.debug(f"Conversation saved, message count: {len(conversation.messages)}")
+            except Exception as db_error:
+                logger.error(f"Database commit error: {str(db_error)}")
+                db.session.rollback()
+                return jsonify({'message': f'Error saving conversation: {str(db_error)}'}), 500
+
             response = {
                 'id': conversation.id,
                 'created_at': conversation.created_at.isoformat(),
@@ -481,3 +507,9 @@ def latest_conversation():
             db.session.rollback()
             logger.error(f"Error saving conversation: {str(e)}")
             return jsonify({'message': f'Error saving conversation: {str(e)}'}), 500
+
+@auth_bp.route('/ping', methods=['GET'])
+def ping():
+    """Health check endpoint to keep the service alive."""
+    logger.debug("Received ping request")
+    return jsonify({'status': 'alive'}), 200

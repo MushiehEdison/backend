@@ -1,16 +1,20 @@
 from HealthApp import create_app, db
 import logging
+import os
 
-logging.basicConfig(level=logging.DEBUG)
+# Configure logging
+logging.basicConfig(level=logging.INFO)  # Use INFO for production to reduce verbosity
 
 app = create_app()
 
 with app.app_context():
     try:
         db.create_all()
-        logging.debug("Database tables created successfully")
+        logging.info("Database tables created successfully")
     except Exception as e:
         logging.error(f"Error creating database tables: {str(e)}")
 
 if __name__ == '__main__':
-    app.run(debug=True)
+    # Use debug mode only in development
+    debug = os.getenv('FLASK_ENV', 'production') == 'development'
+    app.run(debug=debug, host='0.0.0.0', port=int(os.getenv('PORT', 5000)))

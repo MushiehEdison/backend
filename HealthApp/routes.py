@@ -10,7 +10,7 @@ from .ai_engine import generate_personalized_response
 from .speech import generate_tts_audio
 
 # Configure logging
-logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
 # Initialize Blueprint
@@ -298,15 +298,18 @@ def conversation(conversation_id):
                 logger.error(f"Error in generate_personalized_response: {str(ai_error)}")
                 ai_response_text = "I'm sorry, I couldn't process your request due to an issue with the AI service. Please try again later."
                 audio_base64 = None
+                audio_error = "AI service error"
             else:
                 audio_base64 = None
+                audio_error = None
                 if is_mic_input:
                     language = patient_info.get('language', 'en')
                     try:
-                        audio_base64 = generate_tts_audio(ai_response_text, user.id, conversation.id, language)
+                        audio_base64, audio_error = generate_tts_audio(ai_response_text, user.id, conversation.id, language)
                     except Exception as tts_error:
                         logger.error(f"Error generating TTS audio: {str(tts_error)}")
                         audio_base64 = None
+                        audio_error = str(tts_error)
                         logger.warning("Failed to generate speech, proceeding without audio")
 
             logger.debug(f"AI response received: {ai_response_text[:100]}...")
@@ -337,7 +340,8 @@ def conversation(conversation_id):
                 'updated_at': conversation.updated_at.isoformat(),
                 'messages': conversation.messages,
                 'preview': user_message['text'][:100],
-                'audio': audio_base64 if is_mic_input else None
+                'audio': audio_base64 if is_mic_input else None,
+                'audio_error': audio_error if is_mic_input else None
             }
             logger.debug(f"Returning response: {response}")
             return jsonify(response), 200
@@ -410,7 +414,8 @@ def latest_conversation():
                     'updated_at': conversation.updated_at.isoformat() if conversation.updated_at else conversation.created_at.isoformat(),
                     'messages': [],
                     'preview': 'No messages yet',
-                    'audio': None
+                    'audio': None,
+                    'audio_error': None
                 }), 200
 
             conversation = Conversation.query.filter_by(user_id=user.id)\
@@ -459,15 +464,18 @@ def latest_conversation():
                 logger.error(f"Error in generate_personalized_response: {str(ai_error)}")
                 ai_response_text = "I'm sorry, I couldn't process your request due to an issue with the AI service. Please try again later."
                 audio_base64 = None
+                audio_error = "AI service error"
             else:
                 audio_base64 = None
+                audio_error = None
                 if is_mic_input:
                     language = patient_info.get('language', 'en')
                     try:
-                        audio_base64 = generate_tts_audio(ai_response_text, user.id, conversation.id, language)
+                        audio_base64, audio_error = generate_tts_audio(ai_response_text, user.id, conversation.id, language)
                     except Exception as tts_error:
                         logger.error(f"Error generating TTS audio: {str(tts_error)}")
                         audio_base64 = None
+                        audio_error = str(tts_error)
                         logger.warning("Failed to generate speech, proceeding without audio")
 
             logger.debug(f"AI response received: {ai_response_text[:100]}...")
@@ -498,7 +506,8 @@ def latest_conversation():
                 'updated_at': conversation.updated_at.isoformat(),
                 'messages': conversation.messages,
                 'preview': user_message['text'][:100],
-                'audio': audio_base64 if is_mic_input else None
+                'audio': audio_base64 if is_mic_input else None,
+                'audio_error': audio_error if is_mic_input else None
             }
             logger.debug(f"Returning response: {response}")
             return jsonify(response), 200

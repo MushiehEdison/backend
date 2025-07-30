@@ -150,28 +150,45 @@ dataset_df = pd.DataFrame()
 dataset_index = {}
 
 try:
-    dataset_df = pd.read_csv(DATASET_PATH).dropna(subset=[
-        'summary_id', 'patient_id', 'patient_age', 'patient_gender',
-        'diagnosis', 'body_temp_c', 'blood_pressure_systolic',
-        'heart_rate', '',
-        'summary_text', 'date_recorded'
-    ])
-    for idx, row in dataset_df.iterrows():
-        diagnosis = str(row.get('diagnosis', '')).lower()
-        summary = str(row.get('summary_text', '')).lower()
-        if diagnosis not in ['', '']:
-            logger.warning(f"Invalid diagnosis in row {idx}: {diagnosis}")
-            if diagnosis not in dataset_index:
-                dataset_index[diagnosis] = []
-            dataset_index[diagnosis].append(idx)
-        for word in words:
-            if len(word) > 3:
-                if word not in dataset_index:
-                    dataset_index[word] = []
-                dataset_index[word].append(idx)
-    logger.info(f"Loaded dataset with {len(dataset_df)} records and indexed {len(dataset_index)} terms")
+    if not os.path.exists(DATASET_PATH):
+        logger.warning(f"Dataset file not found at {DATASET_PATH}. Proceeding without clinical data.")
+    else:
+        dataset_df = pd.read_csv(DATASET_PATH, encoding='utf-8', on_bad_lines='warn')
+        if dataset_df.empty:
+            logger.warning("Dataset is empty after loading")
+        else:
+            # Verify required columns
+            required_columns = [
+                'summary_id', 'patient_id', 'patient_age', 'patient_gender',
+                'diagnosis', 'body_temp_c', 'blood_pressure_systolic',
+                'heart_rate', 'summary_text', 'date_recorded'
+            ]
+            missing_columns = [col for col in required_columns if col not in dataset_df.columns]
+            if missing_columns:
+                logger.error(f"Missing required columns in dataset: {missing_columns}")
+                dataset_df = pd.DataFrame()  # Reset to empty DataFrame
+            else:
+                dataset_df = dataset_df.dropna(subset=required_columns)
+                if dataset_df.empty:
+                    logger.warning("Dataset is empty after dropping NA values")
+                else:
+                    for idx, row in dataset_df.iterrows():
+                        diagnosis = str(row.get('diagnosis', '')).lower().strip()
+                        summary = str(row.get('summary_text', '')).lower().strip()
+                        words = re.findall(r'\b\w+\b', f"{diagnosis} {summary}")
+                        if diagnosis:
+                            if diagnosis not in dataset_index:
+                                dataset_index[diagnosis] = []
+                            dataset_index[diagnosis].append(idx)
+                        for word in words:
+                            if len(word) > 3:
+                                if word not in dataset_index:
+                                    dataset_index[word] = []
+                                dataset_index[word].append(idx)
+                    logger.info(f"Loaded dataset with {len(dataset_df)} records and indexed {len(dataset_index)} terms")
 except Exception as e:
-    logger.error(f"Error loading dataset: {e}")
+    logger.error(f"Failed to load dataset at {DATASET_PATH}: {str(e)}")
+    dataset_df = pd.DataFrame()  # Ensure dataset_df is empty on failure
 
 def extract_entities(text):
     """Extract symptoms, conditions, and topics from text"""
@@ -212,6 +229,7 @@ def detect_emotional_state(text):
 def query_dataset(symptoms, conditions, max_records=3):
     """Query dataset for relevant clinical records"""
     if dataset_df.empty:
+        logger.warning("Cannot query dataset: DataFrame is empty")
         return []
 
     relevant_indices = set()
@@ -240,8 +258,9 @@ def query_dataset(symptoms, conditions, max_records=3):
                 'bp': row.get('blood_pressure_systolic', 'N/A'),
                 'hr': row.get('heart_rate', 'N/A')
             },
-            'summary': str(row.get('summary_text', ''))[:200] + '...'
+            'summary': str(row.get('summary_text', ''))[:200] + '...' if row.get('summary_text') else 'N/A'
         })
+    logger.debug(f"Queried dataset, found {len(records)} relevant records")
     return records
 
 def call_groq_api(messages, model="llama3-70b-8192", max_tokens=600, temperature=0.8):
@@ -283,6 +302,7 @@ def call_groq_api(messages, model="llama3-70b-8192", max_tokens=600, temperature
     except Exception as e:
         logger.error(f"Unexpected error: {str(e)}")
         return f"Error: Unexpected issue with AI service: {str(e)}"
+
 def build_system_prompt(patient_info, context, emotional_state, language):
     """Build dynamic system prompt for AI"""
     name = patient_info.get('name', 'Patient')
@@ -353,7 +373,6 @@ def build_system_prompt(patient_info, context, emotional_state, language):
     
     return prompt
 
-
 def generate_personalized_response(user_input, patient_info, session_id="default", history=None):
     """Generate AI-driven, context-aware response in the detected language"""
     if not user_input or not patient_info:
@@ -393,7 +412,7 @@ def generate_personalized_response(user_input, patient_info, session_id="default
 
     full_prompt = f"{conversation_history}\n\n{'Utilisateur' if memory.user_preferences['language'] == 'fr' else 'User'}: {user_input}\n\n{'Données cliniques pertinentes' if memory.user_preferences['language'] == 'fr' else 'Relevant Clinical Data'}: {dataset_context}"
 
-    # Call Grok API
+    # Call Groq API
     messages = [
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": full_prompt}

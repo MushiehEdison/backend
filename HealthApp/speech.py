@@ -18,9 +18,14 @@ load_dotenv()
 
 # Initialize Redis for caching (optional, configure for Render)
 try:
-    redis_client = redis.Redis.from_url(os.getenv('REDIS_URL', 'redis://localhost:6379'), decode_responses=True)
-    redis_client.ping()
-    logger.info("Connected to Redis for caching")
+    redis_url = os.getenv('REDIS_URL', None)
+    if redis_url:
+        redis_client = redis.Redis.from_url(redis_url, decode_responses=True)
+        redis_client.ping()
+        logger.info("Connected to Redis for caching")
+    else:
+        logger.warning("REDIS_URL not set in environment variables. Caching disabled.")
+        redis_client = None
 except Exception as e:
     logger.warning(f"Redis connection failed: {str(e)}. Caching disabled.")
     redis_client = None
@@ -47,6 +52,10 @@ def generate_tts_audio(text, user_id, conversation_id, language="en"):
     voice_map = {
         "en": "21m00Tcm4TlvDq8ikWAM",  # Bella: Natural, young female voice
         "fr": "flq6f7yk4E4fJM5XTYuZ",  # Ariane: Natural French female voice
+        "es": "gTV2g8z1lR0vHAdxW2d8",  # Sofia: Natural Spanish female voice
+        "de": "k0l3m4n5p6q7r8s9t0u1",  # Clara: Natural German female voice
+        "hi": "m1n2o3p4q5r6s7t8u9v0",  # Priya: Natural Hindi female voice
+        "ja": "n2o3p4q5r6s7t8u9v0w1",  # Yoko: Natural Japanese female voice
     }
     voice_id = voice_map.get(language, voice_map["en"])
     logger.debug(f"Selected voice_id: {voice_id} for language: {language}")
@@ -89,7 +98,7 @@ def generate_tts_audio(text, user_id, conversation_id, language="en"):
             f"https://api.elevenlabs.io/v1/text-to-speech/{voice_id}",
             json=payload,
             headers=headers,
-            timeout=8  # Reduced timeout for faster failure
+            timeout=8
         )
         response.raise_for_status()
 
@@ -116,8 +125,9 @@ def generate_tts_audio(text, user_id, conversation_id, language="en"):
         return audio_base64, None
 
     except requests.exceptions.HTTPError as http_err:
+        error_msg = f"TTS service error: {response.status_code} - {response.text[:200] if response else 'No response'}"
         logger.error(f"HTTP error from Eleven Labs API: {str(http_err)}, Response: {response.text[:200] if response else 'No response'}")
-        return None, f"TTS service error: {response.status_code if response else 'Unknown'}"
+        return None, error_msg
     except requests.exceptions.Timeout:
         logger.error("Eleven Labs API request timed out")
         return None, "TTS service timed out"

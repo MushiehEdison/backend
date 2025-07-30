@@ -26,3 +26,4 @@ site.db
 
 __pychache__/
 
+.env

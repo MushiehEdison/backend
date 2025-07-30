@@ -52,10 +52,6 @@ def generate_tts_audio(text, user_id, conversation_id, language="en"):
     voice_map = {
         "en": "21m00Tcm4TlvDq8ikWAM",  # Bella: Natural, young female voice
         "fr": "flq6f7yk4E4fJM5XTYuZ",  # Ariane: Natural French female voice
-        "es": "gTV2g8z1lR0vHAdxW2d8",  # Sofia: Natural Spanish female voice
-        "de": "k0l3m4n5p6q7r8s9t0u1",  # Clara: Natural German female voice
-        "hi": "m1n2o3p4q5r6s7t8u9v0",  # Priya: Natural Hindi female voice
-        "ja": "n2o3p4q5r6s7t8u9v0w1",  # Yoko: Natural Japanese female voice
     }
     voice_id = voice_map.get(language, voice_map["en"])
     logger.debug(f"Selected voice_id: {voice_id} for language: {language}")
@@ -125,9 +121,17 @@ def generate_tts_audio(text, user_id, conversation_id, language="en"):
         return audio_base64, None
 
     except requests.exceptions.HTTPError as http_err:
-        error_msg = f"TTS service error: {response.status_code} - {response.text[:200] if response else 'No response'}"
-        logger.error(f"HTTP error from Eleven Labs API: {str(http_err)}, Response: {response.text[:200] if response else 'No response'}")
-        return None, error_msg
+        try:
+            error_detail = response.json().get('detail', {})
+            error_message = error_detail.get('message', response.text or "No response")
+            status = error_detail.get('status', 'unknown')
+            logger.error(f"HTTP error from Eleven Labs API: {response.status_code} - Status: {status}, Message: {error_message}")
+            if response.status_code == 401 and "unusual_activity" in error_message:
+                return None, "TTS service error: Free Tier disabled due to unusual activity. Please check your Eleven Labs account or upgrade to a paid plan."
+            return None, f"TTS service error: {response.status_code} - {error_message[:200]}"
+        except ValueError:
+            logger.error(f"HTTP error from Eleven Labs API (no JSON response): {response.status_code} - {response.text[:200] if response else 'No response'}")
+            return None, f"TTS service error: {response.status_code} - {response.text[:200] if response else 'No response'}"
     except requests.exceptions.Timeout:
         logger.error("Eleven Labs API request timed out")
         return None, "TTS service timed out"

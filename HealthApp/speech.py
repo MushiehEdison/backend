@@ -3,7 +3,6 @@ import requests
 import base64
 import logging
 import hashlib
-from pathlib import Path
 from dotenv import load_dotenv
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
@@ -34,12 +33,15 @@ def generate_tts_audio(text, user_id, conversation_id, language="en"):
         return None, "TTS service unavailable: API key not configured"
 
     if not text or not isinstance(text, str) or text.strip() == "":
-        logger.error("Invalid or empty text input for TTS")
+        logger.error(f"Invalid or empty text input for TTS: {text}")
         return None, "Invalid or empty text provided for audio generation"
 
     # Sanitize and normalize text
     text = text.strip()[:1000]  # Limit to 1000 chars to avoid API abuse
-    logger.debug(f"Processing TTS for text: {text[:50]}..., language: {language}")
+    if len(text) < 3:  # Minimum length to avoid trivial requests
+        logger.warning(f"Text too short for TTS: {text}")
+        return None, "Text too short for audio generation"
+    logger.info(f"Processing TTS for text: {text[:50]}..., language: {language}, user_id: {user_id}, conversation_id: {conversation_id}")
 
     # Extended voice map for multilingual support
     voice_map = {
@@ -69,9 +71,9 @@ def generate_tts_audio(text, user_id, conversation_id, language="en"):
         "text": text,
         "model_id": "eleven_multilingual_v2",
         "voice_settings": {
-            "stability": 0.6,  # Slightly increased for consistency
+            "stability": 0.6,
             "similarity_boost": 0.8,
-            "style": 0.1,  # Reduced for naturalness
+            "style": 0.1,
             "use_speaker_boost": True
         }
     }
@@ -87,13 +89,13 @@ def generate_tts_audio(text, user_id, conversation_id, language="en"):
             f"https://api.elevenlabs.io/v1/text-to-speech/{voice_id}",
             json=payload,
             headers=headers,
-            timeout=10  # Reduced timeout for faster response
+            timeout=8  # Reduced timeout for faster failure
         )
         response.raise_for_status()
 
         audio_content = response.content
         if not audio_content or len(audio_content) < 100:
-            logger.error("Invalid or empty audio content received from Eleven Labs API")
+            logger.error(f"Invalid or empty audio content received from Eleven Labs API: {len(audio_content)} bytes")
             return None, "Invalid audio content received from TTS service"
 
         # Encode audio as base64
@@ -110,7 +112,7 @@ def generate_tts_audio(text, user_id, conversation_id, language="en"):
             except Exception as e:
                 logger.warning(f"Redis cache write failed: {str(e)}")
 
-        logger.debug(f"Generated base64 audio, length: {len(audio_base64)}")
+        logger.info(f"Generated base64 audio, length: {len(audio_base64)}")
         return audio_base64, None
 
     except requests.exceptions.HTTPError as http_err:

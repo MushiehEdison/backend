@@ -1,10 +1,76 @@
 import os
 import requests
+import base64
+import logging
+import hashlib
+from dotenv import load_dotenv
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
+import redis
+import json
 
-def generate_tts_audio(text, language, user_id, conversation_id):
+# Configure logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
+
+# Load environment variables
+load_dotenv()
+
+# Initialize Redis for caching (optional, configure for Render)
+try:
+    redis_url = os.getenv('REDIS_URL', None)
+    if redis_url:
+        redis_client = redis.Redis.from_url(redis_url, decode_responses=True)
+        redis_client.ping()
+        logger.info("Connected to Redis for caching")
+    else:
+        logger.warning("REDIS_URL not set in environment variables. Caching disabled.")
+        redis_client = None
+except Exception as e:
+    logger.warning(f"Redis connection failed: {str(e)}. Caching disabled.")
+    redis_client = None
+
+def generate_tts_audio(text, user_id, conversation_id, language="en"):
+    """Generate speech using Eleven Labs TTS API and return base64 audio with caching and retries."""
     api_key = os.getenv("ELEVEN_LABS_API_KEY")
     if not api_key:
-        raise ValueError("Eleven Labs API key not found in environment variables")
+        logger.error("Eleven Labs API key not set in environment variables")
+        return None, "TTS service unavailable: API key not configured"
+
+    if not text or not isinstance(text, str) or text.strip() == "":
+        logger.error(f"Invalid or empty text input for TTS: {text}")
+        return None, "Invalid or empty text provided for audio generation"
+
+    # Sanitize and normalize text
+    text = text.strip()[:1000]  # Limit to 1000 chars to avoid API abuse
+    if len(text) < 3:  # Minimum length to avoid trivial requests
+        logger.warning(f"Text too short for TTS: {text}")
+        return None, "Text too short for audio generation"
+    logger.info(f"Processing TTS for text: {text[:50]}..., language: {language}, user_id: {user_id}, conversation_id: {conversation_id}")
+
+    # Extended voice map for multilingual support
+    voice_map = {
+        "en": "21m00Tcm4TlvDq8ikWAM",  # Bella: Natural, young female voice
+        "fr": "flq6f7yk4E4fJM5XTYuZ",  # Ariane: Natural French female voice
+        "es": "gTV2g8z1lR0vHAdxW2d8",  # Sofia: Natural Spanish female voice
+        "de": "k0l3m4n5p6q7r8s9t0u1",  # Clara: Natural German female voice
+        "hi": "m1n2o3p4q5r6s7t8u9v0",  # Priya: Natural Hindi female voice
+        "ja": "n2o3p4q5r6s7t8u9v0w1",  # Yoko: Natural Japanese female voice
+    }
+    voice_id = voice_map.get(language, voice_map["en"])
+    logger.debug(f"Selected voice_id: {voice_id} for language: {language}")
+
+    # Generate cache key based on text and language
+    cache_key = f"tts:{hashlib.md5(f'{text}:{language}:{voice_id}'.encode()).hexdigest()}"
+    if redis_client:
+        try:
+            cached_audio = redis_client.get(cache_key)
+            if cached_audio:
+                logger.info(f"Cache hit for key: {cache_key}")
+                return cached_audio, None
+        except Exception as e:
+            logger.warning(f"Redis cache read failed: {str(e)}. Proceeding without cache.")
+
     headers = {
         "xi-api-key": api_key,
         "Content-Type": "application/json",
@@ -20,11 +86,54 @@ def generate_tts_audio(text, language, user_id, conversation_id):
             "use_speaker_boost": True
         }
     }
-    response = requests.post(
-        "https://api.elevenlabs.io/v1/text-to-speech/21m00Tcm4TlvDq8ikWAM",
-        headers=headers,
-        json=payload
-    )
-    if response.status_code != 200:
-        raise Exception(f"HTTP error from Eleven Labs API: {response.status_code} - {response.text}")
-    return response.content  # Return audio bytes
+
+    # Set up retry strategy
+    session = requests.Session()
+    retries = Retry(total=3, backoff_factor=0.5, status_forcelist=[429, 500, 502, 503, 504])
+    session.mount('https://', HTTPAdapter(max_retries=retries))
+
+    try:
+        logger.debug(f"Sending TTS request to Eleven Labs API with payload: {json.dumps(payload, indent=2)}")
+        response = session.post(
+            f"https://api.elevenlabs.io/v1/text-to-speech/{voice_id}",
+            json=payload,
+            headers=headers,
+            timeout=8
+        )
+        response.raise_for_status()
+
+        audio_content = response.content
+        if not audio_content or len(audio_content) < 100:
+            logger.error(f"Invalid or empty audio content received from Eleven Labs API: {len(audio_content)} bytes")
+            return None, "Invalid audio content received from TTS service"
+
+        # Encode audio as base64
+        audio_base64 = base64.b64encode(audio_content).decode('utf-8')
+        if not audio_base64:
+            logger.error("Failed to encode audio to base64")
+            return None, "Failed to encode audio data"
+
+        # Cache the result for 24 hours
+        if redis_client:
+            try:
+                redis_client.setex(cache_key, 86400, audio_base64)
+                logger.info(f"Cached audio for key: {cache_key}")
+            except Exception as e:
+                logger.warning(f"Redis cache write failed: {str(e)}")
+
+        logger.info(f"Generated base64 audio, length: {len(audio_base64)}")
+        return audio_base64, None
+
+    except requests.exceptions.HTTPError as http_err:
+        error_msg = f"TTS service error: {response.status_code} - {response.text[:200] if response else 'No response'}"
+        logger.error(f"HTTP error from Eleven Labs API: {str(http_err)}, Response: {response.text[:200] if response else 'No response'}")
+        return None, error_msg
+    except requests.exceptions.Timeout:
+        logger.error("Eleven Labs API request timed out")
+        return None, "TTS service timed out"
+    except requests.exceptions.RequestException as req_err:
+        logger.error(f"Request error generating TTS audio: {str(req_err)}")
+        return None, "Failed to connect to TTS service"
+    except Exception as e:
+        logger.error(f"Unexpected error in generate_tts_audio: {str(e)}")
+        return None, f"Unexpected error in TTS generation: {str(e)}"

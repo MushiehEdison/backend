@@ -4,10 +4,9 @@ import base64
 import logging
 import hashlib
 from dotenv import load_dotenv
-from requests.adapters import HTTPAdapter
-from urllib3.util.retry import Retry
 import redis
 import json
+from azure.cognitiveservices.speech import SpeechConfig, SpeechSynthesizer, AudioDataStream, SpeechSynthesisOutputFormat
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -31,33 +30,38 @@ except Exception as e:
     redis_client = None
 
 def generate_tts_audio(text, user_id, conversation_id, language="en"):
-    """Generate speech using Eleven Labs TTS API and return base64 audio with caching and retries."""
-    api_key = os.getenv("ELEVEN_LABS_API_KEY")
-    if not api_key:
-        logger.error("Eleven Labs API key not set in environment variables")
-        return None, "TTS service unavailable: API key not configured"
+    """Generate speech using Azure TTS API and return base64 audio with caching."""
+    api_key = os.getenv("AZURE_TTS_KEY")
+    region = os.getenv("AZURE_TTS_REGION")
+    if not api_key or not region:
+        logger.error("Azure TTS API key or region not set in environment variables")
+        return None, "TTS service unavailable: API key or region not configured"
 
     if not text or not isinstance(text, str) or text.strip() == "":
         logger.error(f"Invalid or empty text input for TTS: {text}")
         return None, "Invalid or empty text provided for audio generation"
 
     # Sanitize and normalize text
-    text = text.strip()[:1000]  # Limit to 1000 chars to avoid API abuse
-    if len(text) < 3:  # Minimum length to avoid trivial requests
+    text = text.strip()[:1000]  # Limit to 1000 chars to avoid abuse
+    if len(text) < 3:
         logger.warning(f"Text too short for TTS: {text}")
         return None, "Text too short for audio generation"
     logger.info(f"Processing TTS for text: {text[:50]}..., language: {language}, user_id: {user_id}, conversation_id: {conversation_id}")
 
-    # Extended voice map for multilingual support
+    # Voice map for multilingual support
     voice_map = {
-        "en": "21m00Tcm4TlvDq8ikWAM",  # Bella: Natural, young female voice
-        "fr": "flq6f7yk4E4fJM5XTYuZ",  # Ariane: Natural French female voice
+        "en": "en-US-AriaNeural",  # English: Aria, natural female voice
+        "fr": "fr-FR-DeniseNeural",  # French: Denise
+        "es": "es-ES-ElviraNeural",  # Spanish: Elvira
+        "de": "de-DE-KatjaNeural",  # German: Katja
+        "hi": "hi-IN-SwaraNeural",  # Hindi: Swara
+        "ja": "ja-JP-NanamiNeural"  # Japanese: Nanami
     }
-    voice_id = voice_map.get(language, voice_map["en"])
-    logger.debug(f"Selected voice_id: {voice_id} for language: {language}")
+    voice_name = voice_map.get(language, voice_map["en"])
+    logger.debug(f"Selected voice: {voice_name} for language: {language}")
 
     # Generate cache key based on text and language
-    cache_key = f"tts:{hashlib.md5(f'{text}:{language}:{voice_id}'.encode()).hexdigest()}"
+    cache_key = f"tts:{hashlib.md5(f'{text}:{language}:{voice_name}'.encode()).hexdigest()}"
     if redis_client:
         try:
             cached_audio = redis_client.get(cache_key)
@@ -67,40 +71,28 @@ def generate_tts_audio(text, user_id, conversation_id, language="en"):
         except Exception as e:
             logger.warning(f"Redis cache read failed: {str(e)}. Proceeding without cache.")
 
-    headers = {
-        "xi-api-key": api_key,
-        "Content-Type": "application/json",
-        "Accept": "audio/mpeg"
-    }
-    payload = {
-        "text": text,
-        "model_id": "eleven_multilingual_v2",
-        "voice_settings": {
-            "stability": 0.6,
-            "similarity_boost": 0.8,
-            "style": 0.1,
-            "use_speaker_boost": True
-        }
-    }
-
-    # Set up retry strategy
-    session = requests.Session()
-    retries = Retry(total=3, backoff_factor=0.5, status_forcelist=[429, 500, 502, 503, 504])
-    session.mount('https://', HTTPAdapter(max_retries=retries))
-
     try:
-        logger.debug(f"Sending TTS request to Eleven Labs API with payload: {json.dumps(payload, indent=2)}")
-        response = session.post(
-            f"https://api.elevenlabs.io/v1/text-to-speech/{voice_id}",
-            json=payload,
-            headers=headers,
-            timeout=8
-        )
-        response.raise_for_status()
+        # Initialize Azure TTS
+        speech_config = SpeechConfig(subscription=api_key, region=region)
+        speech_config.speech_synthesis_voice_name = voice_name
+        speech_config.set_speech_synthesis_output_format(SpeechSynthesisOutputFormat.Audio16Khz32KBitRateMonoMp3)
+        synthesizer = SpeechSynthesizer(speech_config=speech_config, audio_config=None)
+        logger.debug(f"Initialized Azure TTS with voice: {voice_name}")
 
-        audio_content = response.content
+        # Generate audio
+        result = synthesizer.speak_text_async(text).get()
+        if result.reason != result.reason.Succeeded:
+            error_message = result.error_details or "Unknown error"
+            logger.error(f"Azure TTS synthesis failed: {error_message}")
+            return None, f"TTS service error: {error_message}"
+
+        audio_stream = AudioDataStream(result)
+        audio_io = BytesIO()
+        audio_stream.save_to_wav_file(audio_io)
+        audio_content = audio_io.getvalue()
+
         if not audio_content or len(audio_content) < 100:
-            logger.error(f"Invalid or empty audio content received from Eleven Labs API: {len(audio_content)} bytes")
+            logger.error(f"Invalid or empty audio content received from Azure TTS: {len(audio_content)} bytes")
             return None, "Invalid audio content received from TTS service"
 
         # Encode audio as base64
@@ -120,24 +112,6 @@ def generate_tts_audio(text, user_id, conversation_id, language="en"):
         logger.info(f"Generated base64 audio, length: {len(audio_base64)}")
         return audio_base64, None
 
-    except requests.exceptions.HTTPError as http_err:
-        try:
-            error_detail = response.json().get('detail', {})
-            error_message = error_detail.get('message', response.text or "No response")
-            status = error_detail.get('status', 'unknown')
-            logger.error(f"HTTP error from Eleven Labs API: {response.status_code} - Status: {status}, Message: {error_message}")
-            if response.status_code == 401 and "unusual_activity" in error_message:
-                return None, "TTS service error: Free Tier disabled due to unusual activity. Please check your Eleven Labs account or upgrade to a paid plan."
-            return None, f"TTS service error: {response.status_code} - {error_message[:200]}"
-        except ValueError:
-            logger.error(f"HTTP error from Eleven Labs API (no JSON response): {response.status_code} - {response.text[:200] if response else 'No response'}")
-            return None, f"TTS service error: {response.status_code} - {response.text[:200] if response else 'No response'}"
-    except requests.exceptions.Timeout:
-        logger.error("Eleven Labs API request timed out")
-        return None, "TTS service timed out"
-    except requests.exceptions.RequestException as req_err:
-        logger.error(f"Request error generating TTS audio: {str(req_err)}")
-        return None, "Failed to connect to TTS service"
     except Exception as e:
-        logger.error(f"Unexpected error in generate_tts_audio: {str(e)}")
-        return None, f"Unexpected error in TTS generation: {str(e)}"
+        logger.error(f"Error in Azure TTS generation: {str(e)}")
+        return None, f"TTS service error: {str(e)}"

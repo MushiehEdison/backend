@@ -494,7 +494,7 @@ def generate_personalized_response(user_input, patient_info, session_id="default
     """Generate AI-driven, context-aware response in the detected language using patient info strategically"""
     if not user_input or not patient_info:
         default_lang = patient_info.get('language', 'en') if patient_info else 'en'
-        error_msg = "J'ai besoin de plus d'informations pour vous aider correctement. Pouvez-vous partager plus de détails ?" if default_lang == "fr" else "I need more information to assist you properly. Could you share more details?"
+        error_msg = "J'ai besoin de plus d'informations pour vous aider correctement. Pouvez-vous partager plus de détails ? 😔" if default_lang == "fr" else "I need more information to assist you properly. Could you share more details? 😔"
         logger.warning(f"Invalid input or patient info, returning: {error_msg}")
         return error_msg
 
@@ -597,20 +597,38 @@ def generate_personalized_response(user_input, patient_info, session_id="default
     response = call_groq_api(messages, max_tokens=500, temperature=0.7)
 
     if response and not response.startswith("Error:"):
-        # Format response for better readability
+        # Format response into shorter paragraphs for better readability
         formatted_response = format_response_for_readability(response)
-        
-        # Add appropriate emoji if needed
+        # Split into shorter paragraphs (1-2 sentences each)
+        sentences = re.split(r'(?<=[.!?])\s+', formatted_response.strip())
+        paragraphs = []
+        current_paragraph = []
+        for i, sentence in enumerate(sentences):
+            current_paragraph.append(sentence)
+            if len(current_paragraph) >= 2 or i == len(sentences) - 1 or any(keyword in sentence.lower() for keyword in [
+                'however', 'also', 'additionally', 'meanwhile', 'furthermore', 'on the other hand', 'in addition',
+                'moreover', 'cependant', 'aussi', 'de plus', 'par ailleurs'
+            ]):
+                paragraphs.append(' '.join(current_paragraph))
+                current_paragraph = []
+        if current_paragraph:
+            paragraphs.append(' '.join(current_paragraph))
+        formatted_response = '\n\n'.join(paragraphs)
+
+        # Add appropriate emoji if needed, slightly more frequent but context-aware
         emoji = get_appropriate_emoji(emotional_state, memory.conversation_depth)
-        if emoji and not any(e in formatted_response for e in ['😊', '😔', '🤗']):
+        if emoji and not any(e in formatted_response for e in ['😊', '😔', '🤗']) and (
+            emotional_state in ['POSITIVE', 'VERY_POSITIVE', 'CONCERNED', 'NEGATIVE', 'VERY_NEGATIVE'] or
+            any(t in topics for t in ['symptoms', 'medical_conditions', 'medication'])
+        ):
             formatted_response += f" {emoji}"
         
         # Add follow-up question if patient info was used for medical context
         if patient_context and any(t in topics for t in ['symptoms', 'medical_conditions', 'medication']):
             follow_up = (
-                "Pouvez-vous me dire si vos symptômes ont changé récemment ou si vous prenez des médicaments spécifiques pour cela ?"
+                "Pouvez-vous me dire si vos symptômes ont changé récemment ou si vous prenez des médicaments spécifiques pour cela ? 😊"
                 if memory.user_preferences["language"] == "fr"
-                else "Could you let me know if your symptoms have changed recently or if you're taking any specific medications for this?"
+                else "Could you let me know if your symptoms have changed recently or if you're taking any specific medications for this? 😊"
             )
             formatted_response += f"\n\n{follow_up}"
 
@@ -621,9 +639,9 @@ def generate_personalized_response(user_input, patient_info, session_id="default
     # Generate fallback response based on detected language and symptoms
     lang = memory.user_preferences["language"]
     fallback = (
-        "Je suis désolé, je rencontre un problème technique."
+        "Je suis désolé, je rencontre un problème technique. 😔"
         if lang == "fr"
-        else "I'm sorry, I'm unable to connect to the AI service at the moment."
+        else "I'm sorry, I'm unable to connect to the AI service at the moment. 😔"
     )
 
     if symptoms:
@@ -634,21 +652,16 @@ def generate_personalized_response(user_input, patient_info, session_id="default
     # Use patient info in fallback if relevant
     if should_use_patient_info() and patient_info.get('chronic_conditions') != 'None':
         fallback += (
-            f" Considérant vos conditions ({patient_info['chronic_conditions']}), parlez-moi plus de ce que vous ressentez."
+            f" Considérant vos conditions ({patient_info['chronic_conditions']}), parlez-moi plus de ce que vous ressentez. 😊"
             if lang == "fr"
-            else f" Considering your conditions ({patient_info['chronic_conditions']}), please tell me more about how you're feeling."
+            else f" Considering your conditions ({patient_info['chronic_conditions']}), please tell me more about how you're feeling. 😊"
         )
     else:
         fallback += (
-            " Parlez-moi plus de ce que vous ressentez pour que je puisse mieux vous aider."
+            " Parlez-moi plus de ce que vous ressentez pour que je puisse mieux vous aider. 😊"
             if lang == "fr"
-            else " Please tell me more about how you're feeling so I can assist you better."
+            else " Please tell me more about how you're feeling so I can assist you better. 😊"
         )
-
-    # Add appropriate emoji based on sentiment
-    emoji = get_appropriate_emoji("NEUTRAL", memory.conversation_depth)
-    if emoji:
-        fallback += f" {emoji}"
 
     memory.add_message(fallback, is_user=False, sentiment="EMPATHETIC")
     logger.warning(f"Fallback response generated: {fallback}")

@@ -533,6 +533,123 @@ def latest_conversation():
             db.session.rollback()
             logger.error(f"Error saving conversation: {str(e)}")
             return jsonify({'message': f'Error saving conversation: {str(e)}'}), 500
+        
+@auth_bp.route('/profile', methods=['GET', 'POST'])
+def profile():
+    """Handle GET and POST requests for user profile."""
+    logger.debug("Received profile request")
+    user = verify_user_from_token(request.headers.get('Authorization'))
+    if not user:
+        logger.error("Invalid or missing token")
+        return jsonify({'message': 'Invalid or missing token'}), 401
+
+    if request.method == 'GET':
+        try:
+            medical_profile = user.medical_profile
+            if not medical_profile:
+                logger.debug(f"No medical profile found for user: {user.id}")
+                return jsonify({
+                    'message': 'No medical profile found',
+                    'profile': None
+                }), 200
+
+            profile_data = {
+                'firstName': medical_profile.first_name,
+                'lastName': medical_profile.last_name,
+                'email': user.email,
+                'phone': medical_profile.phone,
+                'dateOfBirth': medical_profile.date_of_birth.isoformat() if medical_profile.date_of_birth else None,
+                'gender': medical_profile.gender,
+                'maritalStatus': medical_profile.marital_status,
+                'nationality': medical_profile.nationality,
+                'region': medical_profile.region,
+                'city': medical_profile.city,
+                'quarter': medical_profile.quarter,
+                'address': medical_profile.address,
+                'profession': medical_profile.profession,
+                'emergencyContact': medical_profile.emergency_contact,
+                'emergencyRelation': medical_profile.emergency_relation,
+                'emergencyPhone': medical_profile.emergency_phone,
+                'bloodType': medical_profile.blood_type,
+                'genotype': medical_profile.genotype,
+                'allergies': medical_profile.allergies,
+                'chronicConditions': medical_profile.chronic_conditions,
+                'medications': medical_profile.medications,
+                'primaryHospital': medical_profile.primary_hospital,
+                'primaryPhysician': medical_profile.primary_physician,
+                'medicalHistory': medical_profile.medical_history,
+                'vaccinationHistory': medical_profile.vaccination_history,
+                'lastDentalVisit': medical_profile.last_dental_visit.isoformat() if medical_profile.last_dental_visit else None,
+                'lastEyeExam': medical_profile.last_eye_exam.isoformat() if medical_profile.last_eye_exam else None,
+                'lifestyle': medical_profile.lifestyle or {},
+                'familyHistory': medical_profile.family_history
+            }
+            logger.debug(f"Fetched profile for user: {user.id}")
+            return jsonify({
+                'message': 'Profile retrieved successfully',
+                'profile': profile_data
+            }), 200
+        except Exception as e:
+            logger.error(f"Error fetching profile: {str(e)}")
+            return jsonify({'message': f'Error fetching profile: {str(e)}'}), 500
+
+    elif request.method == 'POST':
+        try:
+            data = request.get_json()
+            logger.debug(f"Profile data received: {data}")
+            if not data:
+                logger.error("No data provided")
+                return jsonify({'message': 'No data provided'}), 400
+
+            medical_profile = user.medical_profile
+            if not medical_profile:
+                medical_profile = MedicalProfile(user_id=user.id)
+                db.session.add(medical_profile)
+
+            # Update fields if provided
+            medical_profile.first_name = data.get('firstName', medical_profile.first_name)
+            medical_profile.last_name = data.get('lastName', medical_profile.last_name)
+            medical_profile.phone = data.get('phone', medical_profile.phone)
+            medical_profile.date_of_birth = datetime.datetime.strptime(data['dateOfBirth'], '%Y-%m-%d').date() if data.get('dateOfBirth') else medical_profile.date_of_birth
+            medical_profile.gender = data.get('gender', medical_profile.gender)
+            medical_profile.marital_status = data.get('maritalStatus', medical_profile.marital_status)
+            medical_profile.nationality = data.get('nationality', medical_profile.nationality)
+            medical_profile.region = data.get('region', medical_profile.region)
+            medical_profile.city = data.get('city', medical_profile.city)
+            medical_profile.quarter = data.get('quarter', medical_profile.quarter)
+            medical_profile.address = data.get('address', medical_profile.address)
+            medical_profile.profession = data.get('profession', medical_profile.profession)
+            medical_profile.emergency_contact = data.get('emergencyContact', medical_profile.emergency_contact)
+            medical_profile.emergency_relation = data.get('emergencyRelation', medical_profile.emergency_relation)
+            medical_profile.emergency_phone = data.get('emergencyPhone', medical_profile.emergency_phone)
+            medical_profile.blood_type = data.get('bloodType', medical_profile.blood_type)
+            medical_profile.genotype = data.get('genotype', medical_profile.genotype)
+            medical_profile.allergies = data.get('allergies', medical_profile.allergies)
+            medical_profile.chronic_conditions = data.get('chronicConditions', medical_profile.chronic_conditions)
+            medical_profile.medications = data.get('medications', medical_profile.medications)
+            medical_profile.primary_hospital = data.get('primaryHospital', medical_profile.primary_hospital)
+            medical_profile.primary_physician = data.get('primaryPhysician', medical_profile.primary_physician)
+            medical_profile.medical_history = data.get('medicalHistory', medical_profile.medical_history)
+            medical_profile.vaccination_history = data.get('vaccinationHistory', medical_profile.vaccination_history)
+            medical_profile.last_dental_visit = datetime.datetime.strptime(data['lastDentalVisit'], '%Y-%m-%d').date() if data.get('lastDentalVisit') else medical_profile.last_dental_visit
+            medical_profile.last_eye_exam = datetime.datetime.strptime(data['lastEyeExam'], '%Y-%m-%d').date() if data.get('lastEyeExam') else medical_profile.last_eye_exam
+            medical_profile.lifestyle = data.get('lifestyle', medical_profile.lifestyle)
+            medical_profile.family_history = data.get('familyHistory', medical_profile.family_history)
+
+            db.session.commit()
+            logger.debug(f"Profile updated for user: {user.id}")
+            return jsonify({
+                'message': 'Profile updated successfully',
+                'profile': data
+            }), 200
+        except ValueError as ve:
+            db.session.rollback()
+            logger.error(f"Invalid date format: {str(ve)}")
+            return jsonify({'message': 'Invalid date format. Use YYYY-MM-DD'}), 400
+        except Exception as e:
+            db.session.rollback()
+            logger.error(f"Error updating profile: {str(e)}")
+            return jsonify({'message': f'Error updating profile: {str(e)}'}), 500
 
 @auth_bp.route('/ping', methods=['GET'])
 def ping():

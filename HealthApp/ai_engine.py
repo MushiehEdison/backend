@@ -396,8 +396,9 @@ def get_appropriate_emoji(emotional_state, conversation_depth):
     return emoji_map.get(emotional_state, '')
 
 def build_system_prompt(patient_info, context, emotional_state, language):
-    """Build dynamic system prompt for AI with optimizations"""
-    # Use username if available, otherwise first name, avoid repetitive full names
+    """Build a dynamic system prompt for AI with cultural and contextual optimizations"""
+    
+    # Use username if available, otherwise first name, and avoid repetitive use
     name = patient_info.get('name', 'Patient')
     username = patient_info.get('username', '')
     age = patient_info.get('age', 'N/A')
@@ -411,46 +412,51 @@ def build_system_prompt(patient_info, context, emotional_state, language):
     emotional_trend = [e['sentiment'] for e in context['emotional_progression']]
 
     # Determine name usage strategy
-    name_instruction = ""
     if username:
         name_instruction = f"Use the username '{username}' occasionally, not in every message."
     elif conversation_depth > 2:
         first_name = name.split()[0] if name != 'Patient' else ''
-        name_instruction = f"Use the name '{first_name}' sparingly, avoid repetitive name usage." if first_name else "Avoid using names repetitively."
+        name_instruction = (
+            f"Use the name '{first_name}' sparingly, and avoid repetitive usage." if first_name 
+            else "Avoid overusing names."
+        )
     else:
-        name_instruction = "You may use the patient's name occasionally but don't overuse it."
+        name_instruction = "You may use the patient’s name occasionally, but don’t overuse it."
 
     if language == "fr":
-        prompt = f"""Vous êtes Dr. Healia, un assistant médical intelligent et empathique pour les patients camerounais.
+        prompt = f"""Vous êtes Dr. Healia, un assistant médical intelligent et empathique au service des patients camerounais.
 
 **Profil du patient** :
 - Nom : {name}
 - Âge : {age} ans
 - Région : {region}
-- Langue : Français (détectée à partir de l'entrée utilisateur)
+- Langue : Français (détectée à partir de l’entrée utilisateur)
 
 **Contexte de la conversation** :
 - Messages récents : {len(recent_messages)} échanges
 - Symptômes mentionnés : {', '.join(symptoms) if symptoms else 'Aucun'}
-- Conditions mentionnées : {', '.join(conditions) if conditions else 'Aucune'}
+- Affections mentionnées : {', '.join(conditions) if conditions else 'Aucune'}
 - Sujets abordés : {', '.join(topics) if topics else 'Aucun'}
 - État émotionnel actuel : {emotional_state}
-- Progression émotionnelle : {', '.join(emotional_trend[-3:]) if emotional_trend else 'Aucune'}
+- Évolution émotionnelle : {', '.join(emotional_trend[-3:]) if emotional_trend else 'Aucune'}
 
 **Instructions importantes** :
-1. Répondez en français si l'utilisateur écrit en français, ou en anglais si l'utilisateur écrit en anglais.
+1. Répondez en français si l'utilisateur écrit en français, sinon en anglais.
 2. {name_instruction}
-3. Structurez vos réponses en paragraphes courts et clairs pour faciliter la lecture.
-4. Utilisez un ton naturel, empathique et adapté au contexte culturel camerounais.
-5. Utilisez des emojis avec parcimonie - seulement des emojis de visage appropriés (😊, 😔, 🤗) et pas dans chaque message.
-6. Tenez compte de l'historique de conversation sans répéter inutilement les informations.
-7. Répondez SEULEMENT à ce qui est demandé - n'ajoutez pas d'informations ou de conditions non mentionnées par l'utilisateur.
-8. Posez des questions de suivi pertinentes en fonction des symptômes, conditions et émotions, sans transformer l'échange en interrogatoire.
-9. Si la requête est vague, demandez des précisions pour mieux orienter la réponse.
-10. Fournissez des conseils pratiques, simples et adaptés à la réalité camerounaise."""
-    
+3. Structurez vos réponses en paragraphes courts et faciles à lire.
+4. Adoptez un ton naturel, empathique et culturellement adapté aux patients camerounais.
+5. Utilisez les emojis avec modération – privilégiez les visages expressifs (😊, 😔, 🤗) dans les réponses longues, mais évitez d’en mettre dans chaque message.
+6. Tenez compte de l’historique de la conversation sans répéter les informations déjà partagées.
+7. Répondez UNIQUEMENT à ce qui est demandé – n’ajoutez pas de détails médicaux ou de diagnostics non mentionnés.
+8. Posez des questions de suivi pertinentes en fonction des symptômes, des affections et de l’état émotionnel, sans donner l’impression d’interroger.
+9. Si la demande est vague, demandez des précisions pour mieux orienter votre réponse.
+10. Donnez des conseils simples, concrets et adaptés à la réalité camerounaise.
+11. Utilisez des paragraphes pour éviter les gros blocs de texte fatigants pour les yeux.
+12. Employez un langage simple, même pour les sujets médicaux complexes, pour que chacun puisse comprendre.
+13. Parlez de manière naturelle et familière, comme un médecin local à qui l'on peut faire confiance.
+"""
     else:
-        prompt = f"""You are Dr. Healia, an intelligent and empathetic medical assistant for Cameroonian patients.
+        prompt = f"""You are Dr. Healia, an intelligent and empathetic medical assistant supporting patients in Cameroon.
 
 **Patient Profile**:
 - Name: {name}
@@ -469,19 +475,23 @@ def build_system_prompt(patient_info, context, emotional_state, language):
 **Important Instructions**:
 1. Respond in English if the user writes in English, or in French if the user writes in French.
 2. {name_instruction}
-3. Structure your responses in short, clear paragraphs for easy reading.
-4. Use a natural, empathetic tone that's culturally appropriate for Cameroonian patients.
-5. Use emojis sparingly - only appropriate face emojis (😊, 😔, 🤗) and not in every message.
-6. Build on the conversation history without repeating already known facts.
-7. Respond ONLY to what is asked - don't add unrelated information or conditions not mentioned by the user.
-8. Ask meaningful follow-up questions based on symptoms, conditions, and emotional state without making it feel like an interrogation.
-9. If the request is vague, ask for clarification to provide better support.
-10. Offer practical, accessible advice suited to the Cameroonian context."""
+3. Structure responses into short, clear paragraphs for easier reading.
+4. Use a warm, natural tone that aligns with Cameroonian cultural context.
+5. Use emojis sparingly – mainly expressive faces (😊, 😔, 🤗) in longer responses, but not in every message.
+6. Reference the conversation history without repeating previously covered information.
+7. ONLY address what the user asks – do not introduce unrelated medical information.
+8. Ask thoughtful follow-up questions based on symptoms, conditions, and emotions, without making it feel like an interrogation.
+9. If the request is vague, ask clarifying questions to improve your response.
+10. Provide practical, accessible advice tailored to the Cameroonian setting.
+11. Break long text into paragraphs so it’s easier on the eyes; use emojis to keep it engaging when appropriate.
+12. Avoid complex medical terms – explain things simply so even non-medical users can understand.
+13. Communicate like a trusted local doctor; use familiar language that connects with Cameroonian users.
+"""
     
     return prompt
 
 def generate_personalized_response(user_input, patient_info, session_id="default", history=None):
-    """Generate AI-driven, context-aware response in the detected language"""
+    """Generate AI-driven, context-aware response in the detected language using patient info strategically"""
     if not user_input or not patient_info:
         default_lang = patient_info.get('language', 'en') if patient_info else 'en'
         error_msg = "J'ai besoin de plus d'informations pour vous aider correctement. Pouvez-vous partager plus de détails ?" if default_lang == "fr" else "I need more information to assist you properly. Could you share more details?"
@@ -509,30 +519,75 @@ def generate_personalized_response(user_input, patient_info, session_id="default
     # Get conversation context
     context = memory.get_context_summary()
 
+    # Determine if patient info should be used based on context
+    def should_use_patient_info():
+        # Use patient info if:
+        # 1. Medical symptoms or conditions are mentioned
+        # 2. User asks about treatments or medical advice
+        # 3. Emotional state suggests need for personalized reassurance
+        # 4. Specific patient info (e.g., chronic conditions, allergies) is relevant
+        medical_query = any(keyword in user_input.lower() for keyword in [
+            'treat', 'treatment', 'help', 'manage', 'deal with', 'medicine', 'medication',
+            'traiter', 'traitement', 'gérer', 'médicament', 'soigner', 'guérir'
+        ])
+        has_relevant_info = any([
+            patient_info.get('chronic_conditions') != 'None',
+            patient_info.get('allergies') != 'None',
+            patient_info.get('medications'),
+            patient_info.get('lifestyle', {}).get('smokes'),
+            patient_info.get('lifestyle', {}).get('alcohol') != 'Never',
+            patient_info.get('family_history')
+        ])
+        return (len(symptoms) > 0 or len(conditions) > 0 or medical_query or
+                emotional_state in ['CONCERNED', 'NEGATIVE', 'VERY_NEGATIVE'] and has_relevant_info)
+
     # Only query dataset if it should be used based on context
     dataset_records = []
     if should_use_clinical_data(symptoms, conditions, user_input, memory.conversation_depth):
         dataset_records = query_dataset(memory.mentioned_symptoms, memory.mentioned_conditions)
 
-    # Build prompt
+    # Build prompt with selective patient info
     system_prompt = build_system_prompt(patient_info, context, emotional_state, memory.user_preferences["language"])
     conversation_history = "\n".join([
         f"{'Utilisateur' if msg['is_user'] else 'Assistant' if memory.user_preferences['language'] == 'fr' else 'User' if msg['is_user'] else 'Assistant'}: {msg['text']}" 
         for msg in context['recent_messages'][-5:]
     ])
     
-    # Only include dataset context if we have relevant data
-    dataset_context = ""
-    if dataset_records:
-        dataset_context = "\n".join([
-            f"{'Cas' if memory.user_preferences['language'] == 'fr' else 'Case'} {i}: {r['diagnosis']} - {r['summary']}" 
-            for i, r in enumerate(dataset_records, 1)
-        ])
-    
-    if dataset_context:
-        full_prompt = f"{conversation_history}\n\n{'Utilisateur' if memory.user_preferences['language'] == 'fr' else 'User'}: {user_input}\n\n{'Données cliniques pertinentes' if memory.user_preferences['language'] == 'fr' else 'Relevant Clinical Data'}: {dataset_context}"
-    else:
-        full_prompt = f"{conversation_history}\n\n{'Utilisateur' if memory.user_preferences['language'] == 'fr' else 'User'}: {user_input}"
+    # Include patient info only if relevant
+    patient_context = ""
+    if should_use_patient_info():
+        relevant_info = []
+        if patient_info.get('chronic_conditions') != 'None' and any(c.lower() in user_input.lower() for c in patient_info.get('chronic_conditions', '').split(',')):
+            relevant_info.append(f"Chronic conditions: {patient_info['chronic_conditions']}")
+        if patient_info.get('allergies') != 'None' and 'allergy' in user_input.lower() or 'allergic' in user_input.lower():
+            relevant_info.append(f"Allergies: {patient_info['allergies']}")
+        if patient_info.get('medications') and 'medication' in user_input.lower() or 'medicine' in user_input.lower():
+            relevant_info.append(f"Medications: {patient_info['medications']}")
+        if patient_info.get('lifestyle', {}).get('smokes') and 'smoking' in user_input.lower():
+            relevant_info.append(f"Smoking status: {'Smokes' if patient_info['lifestyle']['smokes'] else 'Non-smoker'}")
+        if patient_info.get('family_history') and 'family' in user_input.lower() or 'history' in user_input.lower():
+            relevant_info.append(f"Family medical history: {patient_info['family_history']}")
+        if patient_info.get('age') != 'N/A' and 'age' in user_input.lower() or any(c in conditions for c in ['diabetes', 'hypertension', 'cancer']):
+            relevant_info.append(f"Age: {patient_info['age']}")
+        if patient_info.get('region') != 'N/A' and any(t in topics for t in ['malaria', 'yellow fever']):
+            relevant_info.append(f"Region: {patient_info['region']}")
+
+        if relevant_info:
+            patient_context = f"{'Informations pertinentes sur le patient' if memory.user_preferences['language'] == 'fr' else 'Relevant Patient Information'}: " + "; ".join(relevant_info)
+
+    # Combine dataset and patient context if both are relevant
+    additional_context = []
+    if dataset_context := "\n".join([
+        f"{'Cas' if memory.user_preferences['language'] == 'fr' else 'Case'} {i}: {r['diagnosis']} - {r['summary']}" 
+        for i, r in enumerate(dataset_records, 1)
+    ]):
+        additional_context.append(f"{'Données cliniques pertinentes' if memory.user_preferences['language'] == 'fr' else 'Relevant Clinical Data'}: {dataset_context}")
+    if patient_context:
+        additional_context.append(patient_context)
+
+    full_prompt = f"{conversation_history}\n\n{'Utilisateur' if memory.user_preferences['language'] == 'fr' else 'User'}: {user_input}"
+    if additional_context:
+        full_prompt += f"\n\n{'\n'.join(additional_context)}"
 
     # Call Groq API with optimized parameters
     messages = [
@@ -550,11 +605,20 @@ def generate_personalized_response(user_input, patient_info, session_id="default
         if emoji and not any(e in formatted_response for e in ['😊', '😔', '🤗']):
             formatted_response += f" {emoji}"
         
+        # Add follow-up question if patient info was used for medical context
+        if patient_context and any(t in topics for t in ['symptoms', 'medical_conditions', 'medication']):
+            follow_up = (
+                "Pouvez-vous me dire si vos symptômes ont changé récemment ou si vous prenez des médicaments spécifiques pour cela ?"
+                if memory.user_preferences["language"] == "fr"
+                else "Could you let me know if your symptoms have changed recently or if you're taking any specific medications for this?"
+            )
+            formatted_response += f"\n\n{follow_up}"
+
         memory.add_message(formatted_response, is_user=False, sentiment="EMPATHETIC")
         logger.info(f"Generated AI response: {formatted_response[:100]}...")
         return formatted_response
 
-# Generate fallback response based on detected language and symptoms
+    # Generate fallback response based on detected language and symptoms
     lang = memory.user_preferences["language"]
     fallback = (
         "Je suis désolé, je rencontre un problème technique."
@@ -567,11 +631,19 @@ def generate_personalized_response(user_input, patient_info, session_id="default
             f"{' Vous avez mentionné ' if lang == 'fr' else ' You mentioned '} {', '.join(list(symptoms)[:2])}."
         )
 
-    fallback += (
-        " Parlez-moi plus de ce que vous ressentez pour que je puisse mieux vous aider."
-        if lang == "fr"
-        else " Please tell me more about how you're feeling so I can assist you better."
-    )
+    # Use patient info in fallback if relevant
+    if should_use_patient_info() and patient_info.get('chronic_conditions') != 'None':
+        fallback += (
+            f" Considérant vos conditions ({patient_info['chronic_conditions']}), parlez-moi plus de ce que vous ressentez."
+            if lang == "fr"
+            else f" Considering your conditions ({patient_info['chronic_conditions']}), please tell me more about how you're feeling."
+        )
+    else:
+        fallback += (
+            " Parlez-moi plus de ce que vous ressentez pour que je puisse mieux vous aider."
+            if lang == "fr"
+            else " Please tell me more about how you're feeling so I can assist you better."
+        )
 
     # Add appropriate emoji based on sentiment
     emoji = get_appropriate_emoji("NEUTRAL", memory.conversation_depth)

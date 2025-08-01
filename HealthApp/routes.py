@@ -536,23 +536,28 @@ def latest_conversation():
             return jsonify({'message': f'Error saving conversation: {str(e)}'}), 500
         
 @auth_bp.route('/api/auth/profile', methods=['GET'])
-@jwt_required()
 def get_profile():
+    """Fetch the user's medical profile."""
     try:
-        user_id = get_jwt_identity()
-        profile = MedicalProfile.query.filter_by(user_id=user_id).first()
+        user = verify_user_from_token(request.headers.get('Authorization'))
+        if not user:
+            logger.error("Invalid or missing token")
+            return jsonify({'message': 'Invalid or missing token'}), 401
+
+        logger.debug(f"Fetching profile for user_id: {user.id}")
+        profile = MedicalProfile.query.filter_by(user_id=user.id).first()
         
         if not profile:
-            # Return empty profile for new users
+            logger.debug(f"No profile found for user_id: {user.id}, returning empty profile")
             return jsonify({}), 200
         
         # Convert profile to dictionary, handling all fields
         profile_data = {
             'firstName': profile.first_name or '',
             'lastName': profile.last_name or '',
-            'email': profile.email or '',
             'phone': profile.phone or '',
-            'dateOfBirth': profile.date_of_birth or '',
+            'dateOfBirth': profile.date_of_birth.isoformat() if profile.date_of_birth else '',
+            'age': profile.age if profile.age is not None else '',
             'gender': profile.gender or '',
             'maritalStatus': profile.marital_status or '',
             'nationality': profile.nationality or 'Cameroonian',
@@ -573,41 +578,49 @@ def get_profile():
             'primaryPhysician': profile.primary_physician or '',
             'medicalHistory': profile.medical_history or '',
             'vaccinationHistory': profile.vaccination_history or '',
-            'lastDentalVisit': profile.last_dental_visit or '',
-            'lastEyeExam': profile.last_eye_exam or '',
-            'lifestyle': {
-                'smokes': profile.lifestyle_smokes if profile.lifestyle_smokes is not None else False,
-                'alcohol': profile.lifestyle_alcohol or 'Never',
-                'exercise': profile.lifestyle_exercise or 'Never',
-                'diet': profile.lifestyle_diet or 'Balanced'
+            'lastDentalVisit': profile.last_dental_visit.isoformat() if profile.last_dental_visit else '',
+            'lastEyeExam': profile.last_eye_exam.isoformat() if profile.last_eye_exam else '',
+            'lifestyle': profile.lifestyle or {
+                'smokes': False,
+                'alcohol': 'Never',
+                'exercise': 'Never',
+                'diet': 'Balanced'
             },
-            'familyHistory': profile.family_history or '',
-            'insuranceProvider': profile.insurance_provider or '',
-            'insuranceNumber': profile.insurance_number or ''
+            'familyHistory': profile.family_history or ''
         }
+        logger.debug(f"Profile fetched successfully for user_id: {user.id}")
         return jsonify(profile_data), 200
     except Exception as e:
+        logger.error(f"Error fetching profile for user_id {user.id if 'user' in locals() else 'unknown'}: {str(e)}")
         return jsonify({'message': f'Error fetching profile: {str(e)}'}), 500
 
 @auth_bp.route('/api/auth/profile', methods=['POST'])
-@jwt_required()
 def save_profile():
+    """Save or update the user's medical profile."""
     try:
-        user_id = get_jwt_identity()
+        user = verify_user_from_token(request.headers.get('Authorization'))
+        if not user:
+            logger.error("Invalid or missing token")
+            return jsonify({'message': 'Invalid or missing token'}), 401
+
+        logger.debug(f"Saving profile for user_id: {user.id}")
         data = request.get_json()
+        if not data:
+            logger.error("No data provided in request")
+            return jsonify({'message': 'No data provided'}), 400
         
         # Find existing profile or create new
-        profile = MedicalProfile.query.filter_by(user_id=user_id).first()
+        profile = MedicalProfile.query.filter_by(user_id=user.id).first()
         if not profile:
-            profile = MedicalProfile(user_id=user_id)
+            logger.debug(f"No existing profile for user_id: {user.id}, creating new")
+            profile = MedicalProfile(user_id=user.id)
             db.session.add(profile)
         
         # Update fields if provided, allow empty or missing fields
         profile.first_name = data.get('firstName', profile.first_name or '')
         profile.last_name = data.get('lastName', profile.last_name or '')
-        profile.email = data.get('email', profile.email or '')
         profile.phone = data.get('phone', profile.phone or '')
-        profile.date_of_birth = data.get('dateOfBirth', profile.date_of_birth or '')
+        profile.date_of_birth = datetime.strptime(data['dateOfBirth'], '%Y-%m-%d').date() if data.get('dateOfBirth') else profile.date_of_birth
         profile.gender = data.get('gender', profile.gender or '')
         profile.marital_status = data.get('maritalStatus', profile.marital_status or '')
         profile.nationality = data.get('nationality', profile.nationality or 'Cameroonian')
@@ -628,65 +641,67 @@ def save_profile():
         profile.primary_physician = data.get('primaryPhysician', profile.primary_physician or '')
         profile.medical_history = data.get('medicalHistory', profile.medical_history or '')
         profile.vaccination_history = data.get('vaccinationHistory', profile.vaccination_history or '')
-        profile.last_dental_visit = data.get('lastDentalVisit', profile.last_dental_visit or '')
-        profile.last_eye_exam = data.get('lastEyeExam', profile.last_eye_exam or '')
+        profile.last_dental_visit = datetime.strptime(data['lastDentalVisit'], '%Y-%m-%d').date() if data.get('lastDentalVisit') else profile.last_dental_visit
+        profile.last_eye_exam = datetime.strptime(data['lastEyeExam'], '%Y-%m-%d').date() if data.get('lastEyeExam') else profile.last_eye_exam
+        profile.lifestyle = data.get('lifestyle', profile.lifestyle or {
+            'smokes': False,
+            'alcohol': 'Never',
+            'exercise': 'Never',
+            'diet': 'Balanced'
+        })
         profile.family_history = data.get('familyHistory', profile.family_history or '')
-        profile.insurance_provider = data.get('insuranceProvider', profile.insurance_provider or '')
-        profile.insurance_number = data.get('insuranceNumber', profile.insurance_number or '')
-        
-        # Update lifestyle fields
-        lifestyle = data.get('lifestyle', {})
-        profile.lifestyle_smokes = lifestyle.get('smokes', profile.lifestyle_smokes if profile.lifestyle_smokes is not None else False)
-        profile.lifestyle_alcohol = lifestyle.get('alcohol', profile.lifestyle_alcohol or 'Never')
-        profile.lifestyle_exercise = lifestyle.get('exercise', profile.lifestyle_exercise or 'Never')
-        profile.lifestyle_diet = lifestyle.get('diet', profile.lifestyle_diet or 'Balanced')
 
         profile.updated_at = datetime.utcnow()
         
-        db.session.commit()
+        try:
+            db.session.commit()
+            logger.debug(f"Profile saved successfully for user_id: {user.id}")
+        except Exception as db_error:
+            db.session.rollback()
+            logger.error(f"Database commit error for user_id {user.id}: {str(db_error)}")
+            return jsonify({'message': f'Database error: {str(db_error)}'}), 500
         
         # Return updated profile
         profile_data = {
-            'firstName': profile.first_name,
-            'lastName': profile.last_name,
-            'email': profile.email,
-            'phone': profile.phone,
-            'dateOfBirth': profile.date_of_birth,
-            'gender': profile.gender,
-            'maritalStatus': profile.marital_status,
-            'nationality': profile.nationality,
-            'region': profile.region,
-            'city': profile.city,
-            'quarter': profile.quarter,
-            'address': profile.address,
-            'profession': profile.profession,
-            'emergencyContact': profile.emergency_contact,
-            'emergencyRelation': profile.emergency_relation,
-            'emergencyPhone': profile.emergency_phone,
-            'bloodType': profile.blood_type,
-            'genotype': profile.genotype,
-            'allergies': profile.allergies,
-            'chronicConditions': profile.chronic_conditions,
-            'medications': profile.medications,
-            'primaryHospital': profile.primary_hospital,
-            'primaryPhysician': profile.primary_physician,
-            'medicalHistory': profile.medical_history,
-            'vaccinationHistory': profile.vaccination_history,
-            'lastDentalVisit': profile.last_dental_visit,
-            'lastEyeExam': profile.last_eye_exam,
-            'lifestyle': {
-                'smokes': profile.lifestyle_smokes,
-                'alcohol': profile.lifestyle_alcohol,
-                'exercise': profile.lifestyle_exercise,
-                'diet': profile.lifestyle_diet
+            'firstName': profile.first_name or '',
+            'lastName': profile.last_name or '',
+            'phone': profile.phone or '',
+            'dateOfBirth': profile.date_of_birth.isoformat() if profile.date_of_birth else '',
+            'age': profile.age if profile.age is not None else '',
+            'gender': profile.gender or '',
+            'maritalStatus': profile.marital_status or '',
+            'nationality': profile.nationality or 'Cameroonian',
+            'region': profile.region or '',
+            'city': profile.city or '',
+            'quarter': profile.quarter or '',
+            'address': profile.address or '',
+            'profession': profile.profession or '',
+            'emergencyContact': profile.emergency_contact or '',
+            'emergencyRelation': profile.emergency_relation or '',
+            'emergencyPhone': profile.emergency_phone or '',
+            'bloodType': profile.blood_type or '',
+            'genotype': profile.genotype or '',
+            'allergies': profile.allergies or '',
+            'chronicConditions': profile.chronic_conditions or '',
+            'medications': profile.medications or '',
+            'primaryHospital': profile.primary_hospital or '',
+            'primaryPhysician': profile.primary_physician or '',
+            'medicalHistory': profile.medical_history or '',
+            'vaccinationHistory': profile.vaccination_history or '',
+            'lastDentalVisit': profile.last_dental_visit.isoformat() if profile.last_dental_visit else '',
+            'lastEyeExam': profile.last_eye_exam.isoformat() if profile.last_eye_exam else '',
+            'lifestyle': profile.lifestyle or {
+                'smokes': False,
+                'alcohol': 'Never',
+                'exercise': 'Never',
+                'diet': 'Balanced'
             },
-            'familyHistory': profile.family_history,
-            'insuranceProvider': profile.insurance_provider,
-            'insuranceNumber': profile.insurance_number
+            'familyHistory': profile.family_history or ''
         }
         return jsonify({'profile': profile_data}), 200
     except Exception as e:
         db.session.rollback()
+        logger.error(f"Error saving profile for user_id {user.id if 'user' in locals() else 'unknown'}: {str(e)}")
         return jsonify({'message': f'Error saving profile: {str(e)}'}), 500
 
 @auth_bp.route('/ping', methods=['GET'])

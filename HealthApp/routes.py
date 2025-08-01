@@ -5,8 +5,8 @@ from datetime import timezone
 import uuid
 import logging
 from . import db, bcrypt
-from .models import User, Conversation, MedicalProfile
-from flask_jwt_extended import jwt_required, get_jwt_identity
+from .models import User, Conversation
+from flask_jwt_extended import jwt_required
 from .ai_engine import generate_personalized_response
 from .speech import generate_tts_audio
 
@@ -31,6 +31,37 @@ def handle_options(path=None):
     """Handle preflight OPTIONS requests for all auth routes."""
     logger.debug(f"Handling OPTIONS request for path: {path or '/'}")
     return jsonify({}), 200
+
+def verify_user_from_token(auth_header):
+    """Verify user from JWT token in Authorization header."""
+    logger.debug(f"Verifying token with auth_header: {auth_header}")
+    if not auth_header:
+        logger.error("Authorization header is missing")
+        return None
+    if not auth_header.startswith('Bearer '):
+        logger.error(f"Invalid Authorization header format: {auth_header}")
+        return None
+    token = auth_header.split(' ')[1].strip()
+    if not token:
+        logger.error("Token is empty after splitting Authorization header")
+        return None
+    try:
+        decoded = jwt.decode(token, current_app.config['SECRET_KEY'], algorithms=['HS256'], options={'verify_exp': True})
+        user = User.query.get(decoded['user_id'])
+        if not user:
+            logger.error(f"User not found for user_id: {decoded['user_id']}")
+            return None
+        logger.debug(f"User verified: {user.id}")
+        return user
+    except jwt.ExpiredSignatureError:
+        logger.error("Token has expired")
+        return None
+    except jwt.InvalidTokenError as e:
+        logger.error(f"Invalid token: {str(e)}")
+        return None
+    except Exception as e:
+        logger.error(f"Unexpected error verifying token: {str(e)}")
+        return None
 
 @auth_bp.route('/signup', methods=['POST'])
 def signup():
@@ -129,41 +160,38 @@ def signin():
         return jsonify({'message': f'Error: {str(e)}'}), 500
 
 @auth_bp.route('/verify', methods=['GET'])
-@jwt_required()
 def verify():
     """Verify user token."""
-    try:
-        user_id = get_jwt_identity()
-        user = User.query.get(user_id)
-        if not user:
-            logger.error(f"User not found for user_id: {user_id}")
-            return jsonify({'message': 'User not found'}), 404
+    user = verify_user_from_token(request.headers.get('Authorization'))
+    if not user:
+        logger.error("Invalid or missing token")
+        return jsonify({'message': 'Invalid or missing token'}), 401
 
-        logger.debug(f"Token verified for user: {user.id}")
-        return jsonify({
-            'user': {
-                'id': user.id,
-                'name': user.name,
-                'email': user.email,
-                'language': user.language,
-                'gender': user.gender
-            }
-        }), 200
-    except Exception as e:
-        logger.error(f"Error verifying token: {str(e)}")
-        return jsonify({'message': f'Error verifying token: {str(e)}'}), 500
+    logger.debug(f"Token verified for user: {user.id}")
+    return jsonify({
+        'user': {
+            'id': user.id,
+            'name': user.name,
+            'email': user.email,
+            'language': user.language,
+            'gender': user.gender
+        }
+    }), 200
 
 @auth_bp.route('/conversations', methods=['GET'])
-@jwt_required()
 def conversations():
     """Get all conversations for the authenticated user with pagination."""
     logger.debug("Received conversations request")
+    user = verify_user_from_token(request.headers.get('Authorization'))
+    if not user:
+        logger.error("Invalid or missing token")
+        return jsonify({'message': 'Invalid or missing token'}), 401
+
     try:
-        user_id = get_jwt_identity()
         page = int(request.args.get('page', 1))
         per_page = int(request.args.get('per_page', 10))
 
-        query = Conversation.query.filter_by(user_id=user_id)\
+        query = Conversation.query.filter_by(user_id=user.id)\
             .filter(Conversation.messages != None)\
             .filter(db.cast(Conversation.messages, db.Text) != '[]')\
             .order_by(Conversation.updated_at.desc().nullslast(), Conversation.created_at.desc())
@@ -173,7 +201,7 @@ def conversations():
         total = paginated_conversations.total
         pages = paginated_conversations.pages
 
-        logger.debug(f"Fetched {len(conversations)} conversations for user: {user_id}, page: {page}, total: {total}")
+        logger.debug(f"Fetched {len(conversations)} conversations for user: {user.id}, page: {page}, total: {total}")
         return jsonify({
             'conversations': [{
                 'id': conv.id,
@@ -192,34 +220,41 @@ def conversations():
         return jsonify({'message': f'Error fetching conversations: {str(e)}'}), 500
 
 @auth_bp.route('/conversation/<int:conversation_id>', methods=['GET', 'POST'])
-@jwt_required()
 def conversation(conversation_id):
     """Handle GET and POST requests for a specific conversation."""
     logger.debug(f"Received conversation request for ID: {conversation_id}")
-    try:
-        user_id = get_jwt_identity()
-        conversation = Conversation.query.filter_by(id=conversation_id, user_id=user_id).first()
-        if request.method == 'GET':
-            if not conversation:
-                logger.debug(f"Conversation {conversation_id} not found")
-                return jsonify({
-                    'id': conversation_id,
-                    'created_at': datetime.datetime.now(timezone.utc).isoformat(),
-                    'updated_at': datetime.datetime.now(timezone.utc).isoformat(),
-                    'messages': [],
-                    'preview': 'No messages yet'
-                }), 200
+    user = verify_user_from_token(request.headers.get('Authorization'))
+    if not user:
+        logger.error("Invalid or missing token")
+        return jsonify({'message': 'Invalid or missing token'}), 401
+
+    conversation = Conversation.query.filter_by(id=conversation_id, user_id=user.id).first()
+    if request.method == 'GET':
+        if not conversation:
+            logger.debug(f"Conversation {conversation_id} not found")
+            return jsonify({
+                'id': conversation_id,
+                'created_at': datetime.datetime.now(timezone.utc).isoformat(),
+                'updated_at': datetime.datetime.now(timezone.utc).isoformat(),
+                'messages': [],
+                'preview': 'No messages yet'
+            }), 200
+        try:
             logger.debug(f"Fetched conversation: {conversation.id}")
             return jsonify({
                 'id': conversation.id,
                 'created_at': conversation.created_at.isoformat(),
                 'updated_at': conversation.updated_at.isoformat() if conversation.updated_at else conversation.created_at.isoformat(),
                 'messages': conversation.messages or [],
-                'preview': conversation.messages[-1]['text'][:100] if conversation.messages and len(conv.messages) > 0 else 'No messages yet'
+                'preview': conversation.messages[-1]['text'][:100] if conversation.messages and len(conversation.messages) > 0 else 'No messages yet'
             }), 200
+        except Exception as e:
+            logger.error(f"Error fetching conversation: {str(e)}")
+            return jsonify({'message': f'Error fetching conversation: {str(e)}'}), 500
 
-        elif request.method == 'POST':
-            logger.debug(f"Processing POST request for conversation: {conversation_id}")
+    elif request.method == 'POST':
+        logger.debug(f"Processing POST request for conversation: {conversation_id}")
+        try:
             data = request.get_json()
             logger.debug(f"Conversation data received: {data}")
             if not data or 'message' not in data:
@@ -230,7 +265,7 @@ def conversation(conversation_id):
             if not conversation:
                 conversation = Conversation(
                     id=conversation_id,
-                    user_id=user_id,
+                    user_id=user.id,
                     messages=[],
                     created_at=datetime.datetime.now(timezone.utc)
                 )
@@ -240,7 +275,7 @@ def conversation(conversation_id):
             if conversation.messages is None:
                 conversation.messages = []
 
-            session_id = f"user_{user_id}_conv_{conversation.id}"
+            session_id = f"user_{user.id}_conv_{conversation.id}"
             user_message = {
                 'id': str(uuid.uuid4()),
                 'text': data['message'],
@@ -250,7 +285,6 @@ def conversation(conversation_id):
             conversation.messages.append(user_message)
             logger.debug(f"Added user message: {user_message}")
 
-            user = User.query.get(user_id)
             patient_info = {
                 'name': user.name,
                 'language': user.language,
@@ -262,12 +296,7 @@ def conversation(conversation_id):
                 'city': getattr(user.medical_profile, 'city', 'N/A'),
                 'profession': getattr(user.medical_profile, 'profession', 'N/A'),
                 'marital_status': getattr(user.medical_profile, 'marital_status', 'N/A'),
-                'lifestyle': {
-                    'smokes': getattr(user.medical_profile, 'lifestyle_smokes', False),
-                    'alcohol': getattr(user.medical_profile, 'lifestyle_alcohol', 'Never'),
-                    'exercise': getattr(user.medical_profile, 'lifestyle_exercise', 'Never'),
-                    'diet': getattr(user.medical_profile, 'lifestyle_diet', 'Balanced')
-                }
+                'lifestyle': getattr(user.medical_profile, 'lifestyle', {})
             }
 
             logger.debug(f"Calling generate_personalized_response with session_id: {session_id}, message: {data['message']}")
@@ -284,7 +313,7 @@ def conversation(conversation_id):
                     if is_mic_input:
                         language = patient_info.get('language', 'en')
                         logger.info(f"Attempting TTS generation for language: {language}, text: {ai_response_text[:50]}...")
-                        audio_base64, audio_error = generate_tts_audio(ai_response_text, user_id, conversation.id, language)
+                        audio_base64, audio_error = generate_tts_audio(ai_response_text, user.id, conversation.id, language)
                         if not audio_base64:
                             logger.warning(f"TTS failed, error: {audio_error or 'No audio generated by TTS service'}")
                             audio_error = audio_error or "No audio generated by TTS service"
@@ -330,20 +359,24 @@ def conversation(conversation_id):
             logger.debug(f"Returning response: {response}")
             return jsonify(response), 200
 
-    except Exception as e:
-        db.session.rollback()
-        logger.error(f"Error saving conversation: {str(e)}")
-        return jsonify({'message': f'Error saving conversation: {str(e)}'}), 500
+        except Exception as e:
+            db.session.rollback()
+            logger.error(f"Error saving conversation: {str(e)}")
+            return jsonify({'message': f'Error saving conversation: {str(e)}'}), 500
 
 @auth_bp.route('/conversation', methods=['GET', 'POST'])
-@jwt_required()
 def latest_conversation():
     """Handle GET and POST requests for the latest conversation."""
     logger.debug("Received latest conversation request")
-    try:
-        user_id = get_jwt_identity()
-        if request.method == 'GET':
-            conversation = Conversation.query.filter_by(user_id=user_id)\
+    auth_header = request.headers.get('Authorization')
+    user = verify_user_from_token(auth_header)
+    if not user:
+        logger.error(f"Token verification failed for header: {auth_header}")
+        return jsonify({'message': 'Invalid or missing token'}), 401
+
+    if request.method == 'GET':
+        try:
+            conversation = Conversation.query.filter_by(user_id=user.id)\
                 .filter(Conversation.messages != None)\
                 .filter(db.cast(Conversation.messages, db.Text) != '[]')\
                 .order_by(Conversation.updated_at.desc().nullslast(), Conversation.created_at.desc())\
@@ -365,9 +398,13 @@ def latest_conversation():
                 'messages': conversation.messages or [],
                 'preview': conversation.messages[-1]['text'][:100] if conversation.messages and len(conversation.messages) > 0 else 'No messages yet'
             }), 200
+        except Exception as e:
+            logger.error(f"Error fetching conversation: {str(e)}")
+            return jsonify({'message': f'Error fetching conversation: {str(e)}'}), 500
 
-        elif request.method == 'POST':
-            logger.debug("Processing POST request for latest conversation")
+    elif request.method == 'POST':
+        logger.debug("Processing POST request for latest conversation")
+        try:
             data = request.get_json()
             logger.debug(f"Conversation data received: {data}")
             if not data or 'message' not in data:
@@ -377,7 +414,7 @@ def latest_conversation():
             is_mic_input = data.get('isMicInput', False)
             if data['message'] == '':
                 conversation = Conversation(
-                    user_id=user_id,
+                    user_id=user.id,
                     messages=[],
                     created_at=datetime.datetime.now(timezone.utc)
                 )
@@ -394,14 +431,14 @@ def latest_conversation():
                     'audio_error': None
                 }), 200
 
-            conversation = Conversation.query.filter_by(user_id=user_id)\
+            conversation = Conversation.query.filter_by(user_id=user.id)\
                 .filter(Conversation.messages != None)\
                 .filter(db.cast(Conversation.messages, db.Text) != '[]')\
                 .order_by(Conversation.updated_at.desc().nullslast(), Conversation.created_at.desc())\
                 .first()
             if not conversation:
                 conversation = Conversation(
-                    user_id=user_id,
+                    user_id=user.id,
                     messages=[],
                     created_at=datetime.datetime.now(timezone.utc)
                 )
@@ -409,7 +446,7 @@ def latest_conversation():
                 db.session.commit()
                 logger.debug(f"Created new conversation with ID: {conversation.id}")
 
-            session_id = f"user_{user_id}_conv_{conversation.id}"
+            session_id = f"user_{user.id}_conv_{conversation.id}"
             user_message = {
                 'id': str(uuid.uuid4()),
                 'text': data['message'],
@@ -419,7 +456,6 @@ def latest_conversation():
             conversation.messages.append(user_message)
             logger.debug(f"Added user message: {user_message}")
 
-            user = User.query.get(user_id)
             patient_info = {
                 'name': user.name,
                 'language': user.language,
@@ -431,12 +467,7 @@ def latest_conversation():
                 'city': getattr(user.medical_profile, 'city', 'N/A'),
                 'profession': getattr(user.medical_profile, 'profession', 'N/A'),
                 'marital_status': getattr(user.medical_profile, 'marital_status', 'N/A'),
-                'lifestyle': {
-                    'smokes': getattr(user.medical_profile, 'lifestyle_smokes', False),
-                    'alcohol': getattr(user.medical_profile, 'lifestyle_alcohol', 'Never'),
-                    'exercise': getattr(user.medical_profile, 'lifestyle_exercise', 'Never'),
-                    'diet': getattr(user.medical_profile, 'lifestyle_diet', 'Balanced')
-                }
+                'lifestyle': getattr(user.medical_profile, 'lifestyle', {})
             }
 
             logger.debug(f"Calling generate_personalized_response with session_id: {session_id}, message: {data['message']}")
@@ -453,7 +484,7 @@ def latest_conversation():
                     if is_mic_input:
                         language = patient_info.get('language', 'en')
                         logger.info(f"Attempting TTS generation for language: {language}, text: {ai_response_text[:50]}...")
-                        audio_base64, audio_error = generate_tts_audio(ai_response_text, user_id, conversation.id, language)
+                        audio_base64, audio_error = generate_tts_audio(ai_response_text, user.id, conversation.id, language)
                         if not audio_base64:
                             logger.warning(f"TTS failed, error: {audio_error or 'No audio generated by TTS service'}")
                             audio_error = audio_error or "No audio generated by TTS service"
@@ -499,22 +530,20 @@ def latest_conversation():
             logger.debug(f"Returning response: {response}")
             return jsonify(response), 200
 
-    except Exception as e:
-        db.session.rollback()
-        logger.error(f"Error saving conversation: {str(e)}")
-        return jsonify({'message': f'Error saving conversation: {str(e)}'}), 500
-
+        except Exception as e:
+            db.session.rollback()
+            logger.error(f"Error saving conversation: {str(e)}")
+            return jsonify({'message': f'Error saving conversation: {str(e)}'}), 500
+        
 @auth_bp.route('/api/auth/profile', methods=['GET'])
 @jwt_required()
 def get_profile():
-    """Fetch the user's medical profile."""
     try:
         user_id = get_jwt_identity()
-        logger.debug(f"Fetching profile for user_id: {user_id}")
         profile = MedicalProfile.query.filter_by(user_id=user_id).first()
         
         if not profile:
-            logger.debug(f"No profile found for user_id: {user_id}, returning empty profile")
+            # Return empty profile for new users
             return jsonify({}), 200
         
         # Convert profile to dictionary, handling all fields
@@ -546,7 +575,6 @@ def get_profile():
             'vaccinationHistory': profile.vaccination_history or '',
             'lastDentalVisit': profile.last_dental_visit or '',
             'lastEyeExam': profile.last_eye_exam or '',
-            'age': profile.age or '',
             'lifestyle': {
                 'smokes': profile.lifestyle_smokes if profile.lifestyle_smokes is not None else False,
                 'alcohol': profile.lifestyle_alcohol or 'Never',
@@ -557,28 +585,20 @@ def get_profile():
             'insuranceProvider': profile.insurance_provider or '',
             'insuranceNumber': profile.insurance_number or ''
         }
-        logger.debug(f"Profile fetched successfully for user_id: {user_id}")
         return jsonify(profile_data), 200
     except Exception as e:
-        logger.error(f"Error fetching profile for user_id {user_id}: {str(e)}")
         return jsonify({'message': f'Error fetching profile: {str(e)}'}), 500
 
 @auth_bp.route('/api/auth/profile', methods=['POST'])
 @jwt_required()
 def save_profile():
-    """Save or update the user's medical profile."""
     try:
         user_id = get_jwt_identity()
-        logger.debug(f"Saving profile for user_id: {user_id}")
         data = request.get_json()
-        if not data:
-            logger.error("No data provided in request")
-            return jsonify({'message': 'No data provided'}), 400
         
         # Find existing profile or create new
         profile = MedicalProfile.query.filter_by(user_id=user_id).first()
         if not profile:
-            logger.debug(f"No existing profile for user_id: {user_id}, creating new")
             profile = MedicalProfile(user_id=user_id)
             db.session.add(profile)
         
@@ -610,7 +630,6 @@ def save_profile():
         profile.vaccination_history = data.get('vaccinationHistory', profile.vaccination_history or '')
         profile.last_dental_visit = data.get('lastDentalVisit', profile.last_dental_visit or '')
         profile.last_eye_exam = data.get('lastEyeExam', profile.last_eye_exam or '')
-        profile.age = data.get('age', profile.age or '')
         profile.family_history = data.get('familyHistory', profile.family_history or '')
         profile.insurance_provider = data.get('insuranceProvider', profile.insurance_provider or '')
         profile.insurance_number = data.get('insuranceNumber', profile.insurance_number or '')
@@ -622,15 +641,9 @@ def save_profile():
         profile.lifestyle_exercise = lifestyle.get('exercise', profile.lifestyle_exercise or 'Never')
         profile.lifestyle_diet = lifestyle.get('diet', profile.lifestyle_diet or 'Balanced')
 
-        profile.updated_at = datetime.datetime.now(timezone.utc)
+        profile.updated_at = datetime.utcnow()
         
-        try:
-            db.session.commit()
-            logger.debug(f"Profile saved successfully for user_id: {user_id}")
-        except Exception as db_error:
-            db.session.rollback()
-            logger.error(f"Database commit error for user_id {user_id}: {str(db_error)}")
-            return jsonify({'message': f'Database error: {str(db_error)}'}), 500
+        db.session.commit()
         
         # Return updated profile
         profile_data = {
@@ -661,7 +674,6 @@ def save_profile():
             'vaccinationHistory': profile.vaccination_history,
             'lastDentalVisit': profile.last_dental_visit,
             'lastEyeExam': profile.last_eye_exam,
-            'age': profile.age,
             'lifestyle': {
                 'smokes': profile.lifestyle_smokes,
                 'alcohol': profile.lifestyle_alcohol,
@@ -675,7 +687,6 @@ def save_profile():
         return jsonify({'profile': profile_data}), 200
     except Exception as e:
         db.session.rollback()
-        logger.error(f"Error saving profile for user_id {user_id}: {str(e)}")
         return jsonify({'message': f'Error saving profile: {str(e)}'}), 500
 
 @auth_bp.route('/ping', methods=['GET'])

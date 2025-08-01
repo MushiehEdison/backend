@@ -5,7 +5,7 @@ from datetime import timezone
 import uuid
 import logging
 from . import db, bcrypt
-from .models import User, Conversation
+from .models import User, Conversation, MedicalProfile
 from flask_jwt_extended import jwt_required
 from .ai_engine import generate_personalized_response
 from .speech import generate_tts_audio
@@ -614,10 +614,18 @@ def save_profile():
             profile = MedicalProfile(user_id=user.id)
             db.session.add(profile)
         
+        # Update fields with validation
         profile.first_name = data.get('firstName', profile.first_name or '')
         profile.last_name = data.get('lastName', profile.last_name or '')
         profile.phone = data.get('phone', profile.phone or '')
-        profile.date_of_birth = datetime.strptime(data['dateOfBirth'], '%Y-%m-%d').date() if data.get('dateOfBirth') else profile.date_of_birth
+        
+        # Handle date fields safely
+        try:
+            profile.date_of_birth = datetime.strptime(data['dateOfBirth'], '%Y-%m-%d').date() if data.get('dateOfBirth') and data['dateOfBirth'].strip() else profile.date_of_birth
+        except (ValueError, TypeError):
+            logger.warning(f"Invalid dateOfBirth format: {data.get('dateOfBirth')}")
+            profile.date_of_birth = profile.date_of_birth
+        
         profile.gender = data.get('gender', profile.gender or '')
         profile.marital_status = data.get('maritalStatus', profile.marital_status or '')
         profile.nationality = data.get('nationality', profile.nationality or 'Cameroonian')
@@ -638,8 +646,20 @@ def save_profile():
         profile.primary_physician = data.get('primaryPhysician', profile.primary_physician or '')
         profile.medical_history = data.get('medicalHistory', profile.medical_history or '')
         profile.vaccination_history = data.get('vaccinationHistory', profile.vaccination_history or '')
-        profile.last_dental_visit = datetime.strptime(data['lastDentalVisit'], '%Y-%m-%d').date() if data.get('lastDentalVisit') else profile.last_dental_visit
-        profile.last_eye_exam = datetime.strptime(data['lastEyeExam'], '%Y-%m-%d').date() if data.get('lastEyeExam') else profile.last_eye_exam
+        
+        # Handle date fields safely
+        try:
+            profile.last_dental_visit = datetime.strptime(data['lastDentalVisit'], '%Y-%m-%d').date() if data.get('lastDentalVisit') and data['lastDentalVisit'].strip() else profile.last_dental_visit
+        except (ValueError, TypeError):
+            logger.warning(f"Invalid lastDentalVisit format: {data.get('lastDentalVisit')}")
+            profile.last_dental_visit = profile.last_dental_visit
+        
+        try:
+            profile.last_eye_exam = datetime.strptime(data['lastEyeExam'], '%Y-%m-%d').date() if data.get('lastEyeExam') and data['lastEyeExam'].strip() else profile.last_eye_exam
+        except (ValueError, TypeError):
+            logger.warning(f"Invalid lastEyeExam format: {data.get('lastEyeExam')}")
+            profile.last_eye_exam = profile.last_eye_exam
+        
         profile.lifestyle = data.get('lifestyle', profile.lifestyle or {
             'smokes': False,
             'alcohol': 'Never',
@@ -694,6 +714,7 @@ def save_profile():
             },
             'familyHistory': profile.family_history or ''
         }
+        logger.debug(f"Returning profile data for user_id: {user.id}")
         return jsonify({'profile': profile_data}), 200
     except Exception as e:
         db.session.rollback()

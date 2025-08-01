@@ -534,7 +534,7 @@ def latest_conversation():
             db.session.rollback()
             logger.error(f"Error saving conversation: {str(e)}")
             return jsonify({'message': f'Error saving conversation: {str(e)}'}), 500
-        
+
 @auth_bp.route('/api/auth/profile', methods=['GET'])
 def get_profile():
     """Fetch the user's medical profile."""
@@ -551,7 +551,6 @@ def get_profile():
             logger.debug(f"No profile found for user_id: {user.id}, returning empty profile")
             return jsonify({}), 200
         
-        # Convert profile to dictionary, handling all fields
         profile_data = {
             'firstName': profile.first_name or '',
             'lastName': profile.last_name or '',
@@ -609,14 +608,12 @@ def save_profile():
             logger.error("No data provided in request")
             return jsonify({'message': 'No data provided'}), 400
         
-        # Find existing profile or create new
         profile = MedicalProfile.query.filter_by(user_id=user.id).first()
         if not profile:
             logger.debug(f"No existing profile for user_id: {user.id}, creating new")
             profile = MedicalProfile(user_id=user.id)
             db.session.add(profile)
         
-        # Update fields if provided, allow empty or missing fields
         profile.first_name = data.get('firstName', profile.first_name or '')
         profile.last_name = data.get('lastName', profile.last_name or '')
         profile.phone = data.get('phone', profile.phone or '')
@@ -661,7 +658,6 @@ def save_profile():
             logger.error(f"Database commit error for user_id {user.id}: {str(db_error)}")
             return jsonify({'message': f'Database error: {str(db_error)}'}), 500
         
-        # Return updated profile
         profile_data = {
             'firstName': profile.first_name or '',
             'lastName': profile.last_name or '',

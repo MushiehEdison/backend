@@ -6,6 +6,7 @@ import uuid
 import logging
 from . import db, bcrypt
 from .models import User, Conversation
+from flask_jwt_extended import jwt_required
 from .ai_engine import generate_personalized_response
 from .speech import generate_tts_audio
 

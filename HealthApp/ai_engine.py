@@ -300,7 +300,7 @@ def query_dataset(symptoms, conditions, max_records=3):
     return records
 
 def call_groq_api(messages, model="llama3-70b-8192", max_tokens=500, temperature=0.7):
-    """Call Grok API with improved error handling and optimized parameters"""
+    """Call Groq API with improved error handling and optimized parameters"""
     if not GROQ_API_KEY:
         logger.error("GROQ_API_KEY is not set in environment variables")
         return "Error: GROQ_API_KEY is not configured"
@@ -319,22 +319,38 @@ def call_groq_api(messages, model="llama3-70b-8192", max_tokens=500, temperature
 
     try:
         logger.debug(f"Sending request to {GROQ_ENDPOINT} with model {model}")
-        response = requests.post(GROQ_ENDPOINT, headers=headers, json=data, timeout=15, verify=True)
+        logger.debug(f"Request data: {json.dumps(data, indent=2)}")
+        
+        response = requests.post(GROQ_ENDPOINT, headers=headers, json=data, timeout=30, verify=True)
         logger.debug(f"Received response status: {response.status_code}")
-        response.raise_for_status()
+        logger.debug(f"Response headers: {dict(response.headers)}")
+        
+        if response.status_code != 200:
+            logger.error(f"API returned status {response.status_code}: {response.text}")
+            response.raise_for_status()
+            
         result = response.json()
+        logger.debug(f"Response JSON: {json.dumps(result, indent=2)}")
+        
         if 'choices' in result and result['choices']:
             content = result['choices'][0]['message']['content'].strip()
-            logger.info("Successfully received response from Grok API")
+            logger.info("Successfully received response from Groq API")
             return content
-        logger.warning("No valid choices in API response")
-        return "Error: No valid response from AI service"
+        else:
+            logger.warning(f"No valid choices in API response: {result}")
+            return "Error: No valid response from AI service"
+            
     except requests.exceptions.HTTPError as http_err:
-        logger.error(f"HTTP error occurred: {http_err}, Response: {response.text if response else 'No response'}")
-        return f"Error: HTTP error from AI service: {response.status_code if response else 'Unknown'}"
+        logger.error(f"HTTP error occurred: {http_err}")
+        if hasattr(http_err, 'response') and http_err.response is not None:
+            logger.error(f"Response text: {http_err.response.text}")
+        return f"Error: HTTP error from AI service: {http_err}"
     except requests.exceptions.RequestException as req_err:
         logger.error(f"Request error occurred: {req_err}")
         return "Error: Unable to connect to AI service"
+    except json.JSONDecodeError as json_err:
+        logger.error(f"JSON decode error: {json_err}")
+        return "Error: Invalid response format from AI service"
     except Exception as e:
         logger.error(f"Unexpected error: {str(e)}")
         return f"Error: Unexpected issue with AI service: {str(e)}"
@@ -421,7 +437,7 @@ def build_system_prompt(patient_info, context, emotional_state, language):
             else "Avoid overusing names."
         )
     else:
-        name_instruction = "You may use the patient’s name occasionally, but don’t overuse it."
+        name_instruction = "You may use the patient's name occasionally, but don't overuse it."
 
     if language == "fr":
         prompt = f"""Vous êtes Dr. Healia, un assistant médical intelligent et empathique au service des patients camerounais.
@@ -430,7 +446,7 @@ def build_system_prompt(patient_info, context, emotional_state, language):
 - Nom : {name}
 - Âge : {age} ans
 - Région : {region}
-- Langue : Français (détectée à partir de l’entrée utilisateur)
+- Langue : Français (détectée à partir de l'entrée utilisateur)
 
 **Contexte de la conversation** :
 - Messages récents : {len(recent_messages)} échanges
@@ -445,10 +461,10 @@ def build_system_prompt(patient_info, context, emotional_state, language):
 2. {name_instruction}
 3. Structurez vos réponses en paragraphes courts et faciles à lire.
 4. Adoptez un ton naturel, empathique et culturellement adapté aux patients camerounais.
-5. Utilisez les emojis avec modération – privilégiez les visages expressifs (😊, 😔, 🤗) dans les réponses longues, mais évitez d’en mettre dans chaque message.
-6. Tenez compte de l’historique de la conversation sans répéter les informations déjà partagées.
-7. Répondez UNIQUEMENT à ce qui est demandé – n’ajoutez pas de détails médicaux ou de diagnostics non mentionnés.
-8. Posez des questions de suivi pertinentes en fonction des symptômes, des affections et de l’état émotionnel, sans donner l’impression d’interroger.
+5. Utilisez les emojis avec modération – privilégiez les visages expressifs (😊, 😔, 🤗) dans les réponses longues, mais évitez d'en mettre dans chaque message.
+6. Tenez compte de l'historique de la conversation sans répéter les informations déjà partagées.
+7. Répondez UNIQUEMENT à ce qui est demandé – n'ajoutez pas de détails médicaux ou de diagnostics non mentionnés.
+8. Posez des questions de suivi pertinentes en fonction des symptômes, des affections et de l'état émotionnel, sans donner l'impression d'interroger.
 9. Si la demande est vague, demandez des précisions pour mieux orienter votre réponse.
 10. Donnez des conseils simples, concrets et adaptés à la réalité camerounaise.
 11. Utilisez des paragraphes pour éviter les gros blocs de texte fatigants pour les yeux.
@@ -483,7 +499,7 @@ def build_system_prompt(patient_info, context, emotional_state, language):
 8. Ask thoughtful follow-up questions based on symptoms, conditions, and emotions, without making it feel like an interrogation.
 9. If the request is vague, ask clarifying questions to improve your response.
 10. Provide practical, accessible advice tailored to the Cameroonian setting.
-11. Break long text into paragraphs so it’s easier on the eyes; use emojis to keep it engaging when appropriate.
+11. Break long text into paragraphs so it's easier on the eyes; use emojis to keep it engaging when appropriate.
 12. Avoid complex medical terms – explain things simply so even non-medical users can understand.
 13. Communicate like a trusted local doctor; use familiar language that connects with Cameroonian users.
 """
@@ -559,15 +575,15 @@ def generate_personalized_response(user_input, patient_info, session_id="default
         relevant_info = []
         if patient_info.get('chronic_conditions') != 'None' and any(c.lower() in user_input.lower() for c in patient_info.get('chronic_conditions', '').split(',')):
             relevant_info.append(f"Chronic conditions: {patient_info['chronic_conditions']}")
-        if patient_info.get('allergies') != 'None' and 'allergy' in user_input.lower() or 'allergic' in user_input.lower():
+        if patient_info.get('allergies') != 'None' and ('allergy' in user_input.lower() or 'allergic' in user_input.lower()):
             relevant_info.append(f"Allergies: {patient_info['allergies']}")
-        if patient_info.get('medications') and 'medication' in user_input.lower() or 'medicine' in user_input.lower():
+        if patient_info.get('medications') and ('medication' in user_input.lower() or 'medicine' in user_input.lower()):
             relevant_info.append(f"Medications: {patient_info['medications']}")
         if patient_info.get('lifestyle', {}).get('smokes') and 'smoking' in user_input.lower():
             relevant_info.append(f"Smoking status: {'Smokes' if patient_info['lifestyle']['smokes'] else 'Non-smoker'}")
-        if patient_info.get('family_history') and 'family' in user_input.lower() or 'history' in user_input.lower():
+        if patient_info.get('family_history') and ('family' in user_input.lower() or 'history' in user_input.lower()):
             relevant_info.append(f"Family medical history: {patient_info['family_history']}")
-        if patient_info.get('age') != 'N/A' and 'age' in user_input.lower() or any(c in conditions for c in ['diabetes', 'hypertension', 'cancer']):
+        if patient_info.get('age') != 'N/A' and ('age' in user_input.lower() or any(c in conditions for c in ['diabetes', 'hypertension', 'cancer'])):
             relevant_info.append(f"Age: {patient_info['age']}")
         if patient_info.get('region') != 'N/A' and any(t in topics for t in ['malaria', 'yellow fever']):
             relevant_info.append(f"Region: {patient_info['region']}")
@@ -594,6 +610,10 @@ def generate_personalized_response(user_input, patient_info, session_id="default
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": full_prompt}
     ]
+    
+    # Log the full request for debugging
+    logger.debug(f"Full API request - Messages: {json.dumps(messages, indent=2)}")
+    
     response = call_groq_api(messages, max_tokens=500, temperature=0.7)
 
     if response and not response.startswith("Error:"):
@@ -626,9 +646,9 @@ def generate_personalized_response(user_input, patient_info, session_id="default
         # Add follow-up question if patient info was used for medical context
         if patient_context and any(t in topics for t in ['symptoms', 'medical_conditions', 'medication']):
             follow_up = (
-                "Pouvez-vous me dire si vos symptômes ont changé récemment ou si vous prenez des médicaments spécifiques pour cela ? 😊"
+                "Pouvez-vous me dire si vos symptômes ont changé récemment ou si vous prenez des médicaments spécifiques pour cela ?"
                 if memory.user_preferences["language"] == "fr"
-                else "Could you let me know if your symptoms have changed recently or if you're taking any specific medications for this? 😊"
+                else "Could you let me know if your symptoms have changed recently or if you're taking any specific medications for this?"
             )
             formatted_response += f"\n\n{follow_up}"
 
@@ -636,35 +656,55 @@ def generate_personalized_response(user_input, patient_info, session_id="default
         logger.info(f"Generated AI response: {formatted_response[:100]}...")
         return formatted_response
 
-    # Generate fallback response based on detected language and symptoms
+    # Enhanced fallback response based on detected language and symptoms
     lang = memory.user_preferences["language"]
-    fallback = (
-        "Je suis désolé, je rencontre un problème technique. 😔"
-        if lang == "fr"
-        else "I'm sorry, I'm unable to connect to the AI service at the moment. 😔"
-    )
-
+    
+    # Log the error for debugging
+    logger.error(f"API call failed. Response was: {response}")
+    
+    # Create a more helpful fallback response
     if symptoms:
-        fallback += (
-            f"{' Vous avez mentionné ' if lang == 'fr' else ' You mentioned '} {', '.join(list(symptoms)[:2])}."
-        )
-
-    # Use patient info in fallback if relevant
-    if should_use_patient_info() and patient_info.get('chronic_conditions') != 'None':
-        fallback += (
-            f" Considérant vos conditions ({patient_info['chronic_conditions']}), parlez-moi plus de ce que vous ressentez. 😊"
-            if lang == "fr"
-            else f" Considering your conditions ({patient_info['chronic_conditions']}), please tell me more about how you're feeling. 😊"
-        )
+        symptoms_list = list(symptoms)[:3]  # Limit to 3 symptoms
+        if lang == "fr":
+            fallback = f"Je comprends que vous ressentez {', '.join(symptoms_list)}. "
+            if emotional_state in ['CONCERNED', 'NEGATIVE', 'VERY_NEGATIVE']:
+                fallback += "Je sais que cela peut être inquiétant. "
+            
+            # Add context-specific advice based on symptoms
+            if 'pain' in symptoms or 'douleur' in symptoms:
+                fallback += "Pour la douleur, vous pouvez essayer de vous reposer et appliquer de la chaleur ou du froid selon ce qui vous soulage. "
+            if 'stress' in user_input.lower():
+                fallback += "Le stress peut effectivement aggraver certains symptômes physiques. "
+            
+            fallback += "Il serait sage de consulter un professionnel de santé si les symptômes persistent ou s'aggravent. Pouvez-vous me dire depuis quand vous ressentez cela ? 😊"
+        else:
+            fallback = f"I understand you're experiencing {', '.join(symptoms_list)}. "
+            if emotional_state in ['CONCERNED', 'NEGATIVE', 'VERY_NEGATIVE']:
+                fallback += "I know this can be concerning. "
+            
+            # Add context-specific advice based on symptoms
+            if 'pain' in symptoms:
+                fallback += "For pain management, you might try rest and applying heat or cold depending on what feels better. "
+            if 'stress' in user_input.lower():
+                fallback += "Stress can indeed worsen physical symptoms. "
+            
+            fallback += "It would be wise to see a healthcare professional if symptoms persist or worsen. Can you tell me how long you've been experiencing this? 😊"
     else:
-        fallback += (
-            " Parlez-moi plus de ce que vous ressentez pour que je puisse mieux vous aider. 😊"
-            if lang == "fr"
-            else " Please tell me more about how you're feeling so I can assist you better. 😊"
-        )
+        # Generic fallback for non-symptom related issues
+        if lang == "fr":
+            fallback = "Je rencontre actuellement un problème technique, mais je suis là pour vous aider. Pouvez-vous me parler un peu plus de ce qui vous préoccupe ? 😊"
+        else:
+            fallback = "I'm experiencing a technical issue right now, but I'm here to help. Could you tell me a bit more about what's concerning you? 😊"
+
+    # Use patient info in fallback if relevant and available
+    if should_use_patient_info() and patient_info.get('chronic_conditions') != 'None':
+        if lang == "fr":
+            fallback += f" Je note que vous avez des antécédents de {patient_info['chronic_conditions']}."
+        else:
+            fallback += f" I note that you have a history of {patient_info['chronic_conditions']}."
 
     memory.add_message(fallback, is_user=False, sentiment="EMPATHETIC")
-    logger.warning(f"Fallback response generated: {fallback}")
+    logger.warning(f"Enhanced fallback response generated: {fallback}")
     return fallback
 
 
@@ -738,5 +778,36 @@ def test_conversation_flow():
         print(f"Topics: {memory.topics_discussed}")
         print("=" * 70)
 
+# Additional debugging function
+def debug_api_connection():
+    """Test the API connection with a simple request"""
+    print("🔍 Testing API Connection...")
+    
+    if not GROQ_API_KEY:
+        print("❌ GROQ_API_KEY not found in environment variables")
+        return False
+    
+    print(f"✅ API Key found: {GROQ_API_KEY[:10]}...")
+    print(f"📡 Endpoint: {GROQ_ENDPOINT}")
+    
+    # Test with a simple message
+    test_messages = [
+        {"role": "system", "content": "You are a helpful assistant."},
+        {"role": "user", "content": "Say hello"}
+    ]
+    
+    response = call_groq_api(test_messages, max_tokens=50)
+    
+    if response.startswith("Error:"):
+        print(f"❌ API call failed: {response}")
+        return False
+    else:
+        print(f"✅ API call successful: {response}")
+        return True
+
 if __name__ == "__main__":
-    test_conversation_flow()
+    # First test API connection
+    if debug_api_connection():
+        test_conversation_flow()
+    else:
+        print("❌ API connection failed. Please check your configuration.")

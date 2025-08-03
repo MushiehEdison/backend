@@ -535,7 +535,7 @@ def latest_conversation():
             logger.error(f"Error saving conversation: {str(e)}")
             return jsonify({'message': f'Error saving conversation: {str(e)}'}), 500
 
-@auth_bp.route('/api/auth/profile', methods=['GET'])
+@auth_bp.route('/api/auth/profile', methods=['GET', 'POST'])
 def get_profile():
     """Fetch the user's medical profile."""
     try:

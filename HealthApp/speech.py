@@ -1,9 +1,11 @@
 import os
+import requests
 import base64
 import logging
 import hashlib
 from dotenv import load_dotenv
-from murf import Murf
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 import redis
 import json
 
@@ -13,15 +15,6 @@ logger = logging.getLogger(__name__)
 
 # Load environment variables
 load_dotenv()
-
-# Initialize Murf AI client
-api_key = os.getenv("MURF_API_KEY")
-if not api_key:
-    logger.error("Murf AI API key not set in environment variables")
-    murf_client = None
-else:
-    murf_client = Murf(api_key=api_key)
-    logger.info("Initialized Murf AI client")
 
 # Initialize Redis for caching
 try:
@@ -59,7 +52,8 @@ def pre_cache_common_phrases():
             logger.info(f"Redis contains {key_count} keys, checking for common phrases.")
 
         for text, lang in common_phrases:
-            cache_key = f"tts:{hashlib.md5(f'{text}:{lang}:en-US-natalie' if lang == 'en' else 'fr-FR-denise'.encode()).hexdigest()}"
+            # Ensure text is encoded to bytes
+            cache_key = f"tts:{hashlib.md5(f'{text}:{lang}:en-US-natalie' if lang == 'en' else 'fr-FR-denise'.encode('utf-8')).hexdigest()}"
             if not redis_client.exists(cache_key):
                 logger.info(f"Pre-caching phrase: {text[:50]}... ({lang})")
                 audio, error = generate_tts_audio(text, "system", "init", lang)
@@ -71,9 +65,10 @@ def pre_cache_common_phrases():
         logger.error(f"Error in pre_cache_common_phrases: {str(e)}")
 
 def generate_tts_audio(text, user_id, conversation_id, language="en"):
-    """Generate speech using Murf AI TTS with African-accented voices and return base64 audio."""
-    if not murf_client:
-        logger.error("Murf AI client not initialized")
+    """Generate speech using Murf AI TTS API with African-accented voices and return base64 audio."""
+    api_key = os.getenv("MURF_API_KEY")
+    if not api_key:
+        logger.error("Murf AI API key not set in environment variables")
         return None, "TTS service unavailable: API key not configured"
 
     if not text or not isinstance(text, str) or text.strip() == "":
@@ -96,7 +91,7 @@ def generate_tts_audio(text, user_id, conversation_id, language="en"):
     logger.debug(f"Selected voice_id: {voice_id} for language: {language}")
 
     # Generate cache key
-    cache_key = f"tts:{hashlib.md5(f'{text}:{language}:{voice_id}'.encode()).hexdigest()}"
+    cache_key = f"tts:{hashlib.md5(f'{text}:{language}:{voice_id}'.encode('utf-8')).hexdigest()}"
     if redis_client:
         try:
             cached_audio = redis_client.get(cache_key)
@@ -110,21 +105,39 @@ def generate_tts_audio(text, user_id, conversation_id, language="en"):
         except Exception as e:
             logger.warning(f"Redis cache read failed: {str(e)}. Proceeding without cache.")
 
-    try:
-        response = murf_client.text_to_speech.generate(
-            text=text,
-            voice_id=voice_id,
-            format="MP3",
-            sampleRate=24000,
-            pitch="low",  # Lower pitch for African cadence
-            speed=0.9,    # Slower for natural rhythm
-            prosody="expressive"  # Melodic intonation for African-like accents
-        )
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json"
+    }
+    payload = {
+        "text": text,
+        "voiceId": voice_id,
+        "format": "MP3",
+        "sample_rate": 24000,  # Fixed: Changed from sampleRate to sample_rate
+        "pitch": "low",  # Lower pitch for African cadence
+        "speed": 0.9,    # Slower for natural rhythm
+        "prosody": "expressive"  # Melodic intonation for African-like accents
+    }
 
-        audio_content = response.audio_file
+    # Set up retry strategy
+    session = requests.Session()
+    retries = Retry(total=5, backoff_factor=1.0, status_forcelist=[429, 500, 502, 503, 504])
+    session.mount('https://', HTTPAdapter(max_retries=retries))
+
+    try:
+        logger.debug(f"Sending TTS request to Murf AI API with payload: {json.dumps(payload, indent=2)}")
+        response = session.post(
+            "https://api.murf.ai/v1/speech/generate",
+            json=payload,
+            headers=headers,
+            timeout=10
+        )
+        response.raise_for_status()
+
+        audio_content = response.content
         if not audio_content or len(audio_content) < 100:
-            logger.error(f"Invalid or empty audio content received from Murf AI: {len(audio_content)} bytes")
-            return None, "Invalid audio content received from TTS service"
+            logger.error(f"Invalid or empty audio content received from Murf AI API: {len(audio_content)} bytes, response headers: {response.headers}")
+            return None, "No audio received from TTS service"
 
         # Encode audio as base64
         audio_base64 = base64.b64encode(audio_content).decode('utf-8')
@@ -143,8 +156,18 @@ def generate_tts_audio(text, user_id, conversation_id, language="en"):
         logger.info(f"Generated base64 audio, length: {len(audio_base64)}")
         return audio_base64, None
 
+    except requests.exceptions.HTTPError as http_err:
+        error_msg = f"TTS service error: {response.status_code} - {response.text[:200] if response else 'No response'}"
+        logger.error(f"HTTP error from Murf AI API: {str(http_err)}, Response: {response.text[:200] if response else 'No response'}, Headers: {response.headers if response else 'No response'}")
+        return None, error_msg
+    except requests.exceptions.Timeout:
+        logger.error("Murf AI API request timed out after 10 seconds")
+        return None, "TTS service timed out"
+    except requests.exceptions.RequestException as req_err:
+        logger.error(f"Request error generating TTS audio: {str(req_err)}")
+        return None, "Failed to connect to TTS service"
     except Exception as e:
-        logger.error(f"Error generating TTS audio with Murf AI: {str(e)}")
+        logger.error(f"Unexpected error in generate_tts_audio: {str(e)}")
         return None, f"TTS generation failed: {str(e)}"
 
 # Run pre-caching on app startup

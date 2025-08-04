@@ -680,6 +680,107 @@ def save_profile():
         logger.error(f"Error saving profile for user_id {user.id if 'user' in locals() else 'unknown'}: {str(e)}")
         return jsonify({'message': f'Error saving profile: {str(e)}'}), 500
 
+# /opt/render/project/src/HealthApp/auth.py
+# (Already provided in previous response, included here for clarity)
+from flask import Blueprint, request, jsonify, current_app
+import jwt
+import datetime
+from datetime import timezone
+import uuid
+import logging
+from . import db, bcrypt
+from .models import User, Conversation, MedicalProfile
+from flask_jwt_extended import jwt_required
+from .ai_engine import generate_personalized_response
+import requests
+import base64
+
+# Configure logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
+
+# Initialize Blueprint
+auth_bp = Blueprint('auth', __name__, url_prefix='/api/auth')
+
+# ... (other routes unchanged)
+
+@auth_bp.route('/tts', methods=['POST'])
+def tts():
+    """Proxy endpoint for TTS generation."""
+    user = verify_user_from_token(request.headers.get('Authorization'))
+    if not user:
+        logger.error("Invalid or missing token")
+        return jsonify({'message': 'Invalid or missing token'}), 401
+
+    data = request.get_json()
+    text = data.get('text')
+    language = data.get('language', 'en')
+    if not text or not text.strip():
+        logger.error("Invalid or empty text for TTS")
+        return jsonify({'error': 'Invalid or empty text'}), 400
+
+    # Try Murf AI
+    murf_api_key = current_app.config.get('MURF_API_KEY')
+    if murf_api_key:
+        voice_map = {'en': 'en-US-natalie', 'fr': 'fr-FR-denise'}
+        payload = {
+            'text': text[:1000],
+            'voiceId': voice_map.get(language, 'en-US-natalie'),
+            'format': 'mp3',
+            'sampleRate': 24000,
+            'bitrate': 128
+        }
+        try:
+            logger.info(f"Sending TTS request to Murf AI: {payload}")
+            response = requests.post(
+                'https://api.murf.ai/v1/speech/generate',
+                json=payload,
+                headers={
+                    'Authorization': f'Bearer {murf_api_key}',
+                    'Content-Type': 'application/json',
+                    'Accept': 'audio/mpeg'
+                },
+                timeout=10
+            )
+            response.raise_for_status()
+            audio_base64 = base64.b64encode(response.content).decode('utf-8')
+            logger.info("Murf TTS generation successful")
+            return jsonify({'audio': audio_base64}), 200
+        except Exception as e:
+            logger.error(f"Murf TTS generation failed: {str(e)}")
+
+    # Fallback to Narakeet
+    narakeet_api_key = current_app.config.get('NARAKEET_API_KEY')
+    if narakeet_api_key:
+        voice_map = {'en': 'abeo', 'fr': 'french-female-1'}
+        payload = {
+            'text': text[:1000],
+            'voice': voice_map.get(language, 'abeo')
+        }
+        try:
+            logger.info(f"Sending TTS request to Narakeet: {payload}")
+            response = requests.post(
+                'https://api.narakeet.com/text-to-speech/mp3',
+                data=payload,
+                headers={
+                    'x-api-key': narakeet_api_key,
+                    'Content-Type': 'application/x-www-form-urlencoded',
+                    'Accept': 'audio/mpeg'
+                },
+                timeout=10
+            )
+            response.raise_for_status()
+            audio_base64 = base64.b64encode(response.content).decode('utf-8')
+            logger.info("Narakeet TTS generation successful")
+            return jsonify({'audio': audio_base64}), 200
+        except Exception as e:
+            logger.error(f"Narakeet TTS generation failed: {str(e)}")
+            return jsonify({'error': f'TTS generation failed: {str(e)}'}), 500
+
+    return jsonify({'error': 'No TTS service available'}), 500
+
+
+
 @auth_bp.route('/ping', methods=['GET'])
 def ping():
     """Health check endpoint to keep the service alive."""

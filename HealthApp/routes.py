@@ -680,30 +680,6 @@ def save_profile():
         logger.error(f"Error saving profile for user_id {user.id if 'user' in locals() else 'unknown'}: {str(e)}")
         return jsonify({'message': f'Error saving profile: {str(e)}'}), 500
 
-# /opt/render/project/src/HealthApp/auth.py
-# (Already provided in previous response, included here for clarity)
-from flask import Blueprint, request, jsonify, current_app
-import jwt
-import datetime
-from datetime import timezone
-import uuid
-import logging
-from . import db, bcrypt
-from .models import User, Conversation, MedicalProfile
-from flask_jwt_extended import jwt_required
-from .ai_engine import generate_personalized_response
-import requests
-import base64
-
-# Configure logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-logger = logging.getLogger(__name__)
-
-# Initialize Blueprint
-auth_bp = Blueprint('auth', __name__, url_prefix='/api/auth')
-
-# ... (other routes unchanged)
-
 @auth_bp.route('/tts', methods=['POST'])
 def tts():
     """Proxy endpoint for TTS generation."""

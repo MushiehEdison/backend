@@ -39,46 +39,55 @@ class MedicalProfile(db.Model):
     user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
 
     # Personal Info
-    first_name = db.Column(db.String(100))
-    last_name = db.Column(db.String(100))
-    phone = db.Column(db.String(20))
-    date_of_birth = db.Column(db.Date)
-    gender = db.Column(db.String(10))
-    marital_status = db.Column(db.String(20))
-    nationality = db.Column(db.String(50))
-    region = db.Column(db.String(50))
-    city = db.Column(db.String(50))
-    quarter = db.Column(db.String(50))
-    address = db.Column(db.String(200))
-    profession = db.Column(db.String(100))
+    first_name = db.Column(db.String(100), nullable=True)
+    last_name = db.Column(db.String(100), nullable=True)
+    phone = db.Column(db.String(20), nullable=True)
+    date_of_birth = db.Column(db.Date, nullable=True)
+    gender = db.Column(db.String(10), nullable=True)
+    marital_status = db.Column(db.String(20), nullable=True)
+    nationality = db.Column(db.String(50), nullable=True)
+    region = db.Column(db.String(50), nullable=True)
+    city = db.Column(db.String(50), nullable=True)
+    quarter = db.Column(db.String(50), nullable=True)
+    address = db.Column(db.String(200), nullable=True)
+    profession = db.Column(db.String(100), nullable=True)
 
     # Emergency Contact
-    emergency_contact = db.Column(db.String(100))
-    emergency_relation = db.Column(db.String(50))
-    emergency_phone = db.Column(db.String(20))
+    emergency_contact = db.Column(db.String(100), nullable=True)
+    emergency_relation = db.Column(db.String(50), nullable=True)
+    emergency_phone = db.Column(db.String(20), nullable=True)
 
     # Health Info
-    blood_type = db.Column(db.String(5))
-    genotype = db.Column(db.String(5))
-    allergies = db.Column(db.Text)
-    chronic_conditions = db.Column(db.Text)
-    medications = db.Column(db.Text)
+    blood_type = db.Column(db.String(5), nullable=True)
+    genotype = db.Column(db.String(5), nullable=True)
+    allergies = db.Column(db.Text, nullable=True)
+    chronic_conditions = db.Column(db.Text, nullable=True)
+    medications = db.Column(db.Text, nullable=True)
 
     # Medical Providers
-    primary_hospital = db.Column(db.String(100))
-    primary_physician = db.Column(db.String(100))
+    primary_hospital = db.Column(db.String(100), nullable=True)
+    primary_physician = db.Column(db.String(100), nullable=True)
 
     # Medical History
-    medical_history = db.Column(db.Text)
-    vaccination_history = db.Column(db.Text)
-    last_dental_visit = db.Column(db.Date)
-    last_eye_exam = db.Column(db.Date)
+    medical_history = db.Column(db.Text, nullable=True)
+    vaccination_history = db.Column(db.Text, nullable=True)
+    last_dental_visit = db.Column(db.Date, nullable=True)
+    last_eye_exam = db.Column(db.Date, nullable=True)
 
     # Lifestyle
-    lifestyle = db.Column(JSON)
+    lifestyle = db.Column(
+        db.JSON,
+        nullable=True,
+        default=lambda: {
+            'smokes': False,
+            'alcohol': 'Never',
+            'exercise': 'Never',
+            'diet': 'Balanced'
+        }
+    )
 
     # Family Medical History
-    family_history = db.Column(db.Text)
+    family_history = db.Column(db.Text, nullable=True)
 
     user = db.relationship('User', back_populates='medical_profile')
 
@@ -91,6 +100,14 @@ class MedicalProfile(db.Model):
             )
         return None
 
+    def to_dict(self):
+            return {
+                # ... all existing fields ...
+                'dateOfBirth': self.date_of_birth.isoformat() if self.date_of_birth else None,
+                'lastDentalVisit': self.last_dental_visit.isoformat() if self.last_dental_visit else None,
+                'lastEyeExam': self.last_eye_exam.isoformat() if self.last_eye_exam else None,
+                'lifestyle': self.lifestyle or {}
+            }
 class MessageIndex(db.Model):
     __tablename__ = 'message_index'
     id = db.Column(db.Integer, primary_key=True)

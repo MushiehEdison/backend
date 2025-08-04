@@ -696,7 +696,7 @@ def tts():
         return jsonify({'error': 'Invalid or empty text'}), 400
 
     # Try Murf AI
-    murf_api_key = current_app.config.get('MURF_API_KEY')
+    murf_api_key = 'ap2_1ed94e55-aa96-4c3e-bce3-495c9e3c8d4a'
     if murf_api_key:
         voice_map = {'en': 'en-US-natalie', 'fr': 'fr-FR-denise'}
         payload = {

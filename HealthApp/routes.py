@@ -131,6 +131,32 @@ def signin():
             logger.error("Missing email or password")
             return jsonify({'message': 'Missing email or password'}), 400
 
+        # Check for admin credentials first
+        ADMIN_EMAIL = 'admin@healia.com'
+        ADMIN_PASSWORD = 'healia123'
+        
+        if data['email'] == ADMIN_EMAIL and data['password'] == ADMIN_PASSWORD:
+            token = jwt.encode({
+                'user_id': 'admin',
+                'is_admin': True,
+                'exp': datetime.datetime.now(timezone.utc) + datetime.timedelta(days=1)
+            }, current_app.config['SECRET_KEY'], algorithm='HS256')
+            
+            logger.debug("Admin signed in successfully")
+            return jsonify({
+                'message': 'Signed in successfully',
+                'token': token,
+                'user': {
+                    'id': 'admin',
+                    'name': 'Admin User',
+                    'email': ADMIN_EMAIL,
+                    'language': 'en',
+                    'gender': 'unknown',
+                    'is_admin': True
+                }
+            }), 200
+
+        # Regular user authentication
         user = User.query.filter_by(email=data['email']).first()
         if not user or not bcrypt.check_password_hash(user.password, data['password']):
             logger.error("Invalid credentials")
@@ -138,6 +164,7 @@ def signin():
 
         token = jwt.encode({
             'user_id': user.id,
+            'is_admin': False,
             'exp': datetime.datetime.now(timezone.utc) + datetime.timedelta(days=1)
         }, current_app.config['SECRET_KEY'], algorithm='HS256')
 
@@ -150,7 +177,8 @@ def signin():
                 'name': user.name,
                 'email': user.email,
                 'language': user.language,
-                'gender': user.gender
+                'gender': user.gender,
+                'is_admin': False
             }
         }), 200
 
@@ -173,7 +201,8 @@ def verify():
             'name': user.name,
             'email': user.email,
             'language': user.language,
-            'gender': user.gender
+            'gender': user.gender,
+            'is_admin': getattr(user, 'is_admin', False)
         }
     }), 200
 

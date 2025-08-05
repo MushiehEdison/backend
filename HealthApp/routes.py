@@ -131,7 +131,6 @@ def signin():
             logger.error("Missing email or password")
             return jsonify({'message': 'Missing email or password'}), 400
 
-        # Find user by email
         user = User.query.filter_by(email=data['email']).first()
         if not user or not bcrypt.check_password_hash(user.password, data['password']):
             logger.error("Invalid credentials")
@@ -139,7 +138,6 @@ def signin():
 
         token = jwt.encode({
             'user_id': user.id,
-            'is_admin': user.is_admin,
             'exp': datetime.datetime.now(timezone.utc) + datetime.timedelta(days=1)
         }, current_app.config['SECRET_KEY'], algorithm='HS256')
 
@@ -152,8 +150,7 @@ def signin():
                 'name': user.name,
                 'email': user.email,
                 'language': user.language,
-                'gender': user.gender,
-                'is_admin': user.is_admin
+                'gender': user.gender
             }
         }), 200
 
@@ -164,40 +161,21 @@ def signin():
 @auth_bp.route('/verify', methods=['GET'])
 def verify():
     """Verify user token."""
-    try:
-        auth_header = request.headers.get('Authorization')
-        if not auth_header or not auth_header.startswith('Bearer '):
-            logger.error("Invalid or missing token")
-            return jsonify({'message': 'Invalid or missing token'}), 401
+    user = verify_user_from_token(request.headers.get('Authorization'))
+    if not user:
+        logger.error("Invalid or missing token")
+        return jsonify({'message': 'Invalid or missing token'}), 401
 
-        token = auth_header.split(' ')[1]
-        data = jwt.decode(token, current_app.config['SECRET_KEY'], algorithms=['HS256'])
-        user = User.query.get(data['user_id'])
-        if not user:
-            logger.error("User not found")
-            return jsonify({'message': 'User not found'}), 401
-
-        logger.debug(f"Token verified for user: {user.id}")
-        return jsonify({
-            'user': {
-                'id': user.id,
-                'name': user.name,
-                'email': user.email,
-                'language': user.language,
-                'gender': user.gender,
-                'is_admin': user.is_admin
-            }
-        }), 200
-
-    except jwt.ExpiredSignatureError:
-        logger.error("Token expired")
-        return jsonify({'message': 'Token expired'}), 401
-    except jwt.InvalidTokenError:
-        logger.error("Invalid token")
-        return jsonify({'message': 'Invalid token'}), 401
-    except Exception as e:
-        logger.error(f"Error during verification: {str(e)}")
-        return jsonify({'message': f'Error: {str(e)}'}), 500
+    logger.debug(f"Token verified for user: {user.id}")
+    return jsonify({
+        'user': {
+            'id': user.id,
+            'name': user.name,
+            'email': user.email,
+            'language': user.language,
+            'gender': user.gender
+        }
+    }), 200
 
 @auth_bp.route('/conversations', methods=['GET'])
 def conversations():

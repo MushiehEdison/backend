@@ -12,7 +12,6 @@ class User(db.Model):
     phone = db.Column(db.String(15), nullable=False, unique=True)
     language = db.Column(db.String(32), nullable=False)
     gender = db.Column(db.String(20), nullable=False)
-    is_admin = db.Column(db.Boolean, default=False, nullable=False)
     joined_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
     last_active = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
 
@@ -20,6 +19,8 @@ class User(db.Model):
     conversations = db.relationship('Conversation', back_populates='user', lazy=True)
     medical_profile = db.relationship('MedicalProfile', back_populates='user', uselist=False, lazy=True)
     sessions = db.relationship('UserSession', back_populates='user', lazy=True)
+    treatment_preferences = db.relationship('TreatmentPreference', back_populates='user', lazy=True)
+    health_literacy = db.relationship('HealthLiteracy', back_populates='user', lazy=True)
 
     def __repr__(self):
         return f'<User {self.username}>'
@@ -31,13 +32,14 @@ class Conversation(db.Model):
     messages = db.Column(JSON, nullable=False, default=[])
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-    sentiment_score = db.Column(db.Float, nullable=True)  # For patient sentiment analysis
-    completion_status = db.Column(db.String(20), default='in_progress', nullable=False)  # in_progress, completed, dropped
+    sentiment_score = db.Column(db.Float, nullable=True)
+    completion_status = db.Column(db.String(20), default='in_progress', nullable=False)
 
     user = db.relationship('User', back_populates='conversations')
     message_indices = db.relationship('MessageIndex', back_populates='conversation', lazy=True)
     symptom_entries = db.relationship('SymptomEntry', back_populates='conversation', lazy=True)
     diagnoses = db.relationship('Diagnosis', back_populates='conversation', lazy=True)
+    sentiment_records = db.relationship('SentimentRecord', back_populates='conversation', lazy=True)
 
     def __repr__(self):
         return f'<Conversation {self.id} for user {self.user_id}>'
@@ -160,10 +162,10 @@ class SymptomEntry(db.Model):
     __tablename__ = 'symptom_entries'
     id = db.Column(db.Integer, primary_key=True)
     convo_id = db.Column(db.Integer, db.ForeignKey('conversation.id'), nullable=False)
-    symptom_name = db.Column(db.String(100), nullable=False)  # e.g., fever, fatigue, cough
-    severity = db.Column(db.String(20), nullable=True)  # mild, moderate, severe
+    symptom_name = db.Column(db.String(100), nullable=False)
+    severity = db.Column(db.String(20), nullable=True)
     reported_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
-    location = db.Column(db.String(100), nullable=True)  # For outbreak detection
+    location = db.Column(db.String(100), nullable=True)
 
     conversation = db.relationship('Conversation', back_populates='symptom_entries')
 
@@ -174,8 +176,8 @@ class Diagnosis(db.Model):
     __tablename__ = 'diagnoses'
     id = db.Column(db.Integer, primary_key=True)
     convo_id = db.Column(db.Integer, db.ForeignKey('conversation.id'), nullable=False)
-    condition_name = db.Column(db.String(100), nullable=False)  # e.g., Common Cold, Anxiety Disorder
-    accuracy = db.Column(db.Float, nullable=True)  # Accuracy percentage
+    condition_name = db.Column(db.String(100), nullable=False)
+    accuracy = db.Column(db.Float, nullable=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
     requires_attention = db.Column(db.Boolean, default=False, nullable=False)
 
@@ -189,8 +191,8 @@ class HealthAlert(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     title = db.Column(db.String(200), nullable=False)
     description = db.Column(db.Text, nullable=False)
-    severity = db.Column(db.String(20), nullable=False)  # low, medium, high
-    alert_type = db.Column(db.String(50), nullable=False)  # warning, info, success, alert
+    severity = db.Column(db.String(20), nullable=False)
+    alert_type = db.Column(db.String(50), nullable=False)
     created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
     region = db.Column(db.String(50), nullable=True)
 
@@ -201,11 +203,11 @@ class SentimentRecord(db.Model):
     __tablename__ = 'sentiment_records'
     id = db.Column(db.Integer, primary_key=True)
     convo_id = db.Column(db.Integer, db.ForeignKey('conversation.id'), nullable=False)
-    sentiment_category = db.Column(db.String(20), nullable=False)  # Very Positive, Positive, Neutral, Negative, Very Negative
+    sentiment_category = db.Column(db.String(20), nullable=False)
     percentage = db.Column(db.Float, nullable=False)
     recorded_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
 
-    conversation = db.relationship('Conversation', backref='sentiment_records')
+    conversation = db.relationship('Conversation', back_populates='sentiment_records')
 
     def __repr__(self):
         return f'<SentimentRecord {self.id} for conversation {self.convo_id}>'
@@ -213,12 +215,12 @@ class SentimentRecord(db.Model):
 class CommunicationMetric(db.Model):
     __tablename__ = 'communication_metrics'
     id = db.Column(db.Integer, primary_key=True)
-    metric_name = db.Column(db.String(100), nullable=False)  # Understanding Rate, Follow-through Rate, etc.
+    metric_name = db.Column(db.String(100), nullable=False)
     current_value = db.Column(db.Float, nullable=False)
     previous_value = db.Column(db.Float, nullable=True)
-    trend = db.Column(db.String(20), nullable=True)  # up, down
+    trend = db.Column(db.String(20), nullable=True)
     recorded_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
-    time_range = db.Column(db.String(20), nullable=False)  # 24h, 7d, 30d, 90d
+    time_range = db.Column(db.String(20), nullable=False)
 
     def __repr__(self):
         return f'<CommunicationMetric {self.id} - {self.metric_name}>'
@@ -227,12 +229,12 @@ class TreatmentPreference(db.Model):
     __tablename__ = 'treatment_preferences'
     id = db.Column(db.Integer, primary_key=True)
     user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
-    treatment_type = db.Column(db.String(100), nullable=False)  # Natural Remedies, Prescription Medication, etc.
-    preference_score = db.Column(db.Float, nullable=False)  # Percentage preference
-    trend = db.Column(db.String(20), nullable=True)  # up, down, stable
+    treatment_type = db.Column(db.String(100), nullable=False)
+    preference_score = db.Column(db.Float, nullable=False)
+    trend = db.Column(db.String(20), nullable=True)
     recorded_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
 
-    user = db.relationship('User', backref='treatment_preferences')
+    user = db.relationship('User', back_populates='treatment_preferences')
 
     def __repr__(self):
         return f'<TreatmentPreference {self.id} for user {self.user_id}>'
@@ -241,12 +243,12 @@ class HealthLiteracy(db.Model):
     __tablename__ = 'health_literacy'
     id = db.Column(db.Integer, primary_key=True)
     user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
-    age_group = db.Column(db.String(20), nullable=False)  # 18-25, 26-35, etc.
+    age_group = db.Column(db.String(20), nullable=False)
     understanding_rate = db.Column(db.Float, nullable=False)
     engagement_rate = db.Column(db.Float, nullable=False)
     recorded_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
 
-    user = db.relationship('User', backref='health_literacy')
+    user = db.relationship('User', back_populates='health_literacy')
 
     def __repr__(self):
         return f'<HealthLiteracy {self.id} for user {self.user_id}>'
@@ -254,7 +256,7 @@ class HealthLiteracy(db.Model):
 class WorkflowMetric(db.Model):
     __tablename__ = 'workflow_metrics'
     id = db.Column(db.Integer, primary_key=True)
-    metric_name = db.Column(db.String(100), nullable=False)  # Avg Response Time, Session Completion, Drop-off Rate
+    metric_name = db.Column(db.String(100), nullable=False)
     value = db.Column(db.Float, nullable=False)
     change_percentage = db.Column(db.Float, nullable=True)
     recorded_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
@@ -265,7 +267,7 @@ class WorkflowMetric(db.Model):
 class AIPerformance(db.Model):
     __tablename__ = 'ai_performance'
     id = db.Column(db.Integer, primary_key=True)
-    metric_name = db.Column(db.String(100), nullable=False)  # Accuracy, Relevance, Empathy Score, etc.
+    metric_name = db.Column(db.String(100), nullable=False)
     value = db.Column(db.Float, nullable=False)
     recorded_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
 

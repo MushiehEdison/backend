@@ -62,6 +62,12 @@ def verify_user_from_token(auth_header):
         logger.error(f"Unexpected error verifying token: {str(e)}")
         return None
 
+def get_safe_medical_profile_attr(user, attr_name, default_value):
+    """Safely get an attribute from user's medical profile."""
+    if user.medical_profile is None:
+        return default_value
+    return getattr(user.medical_profile, attr_name, default_value)
+
 @auth_bp.route('/signup', methods=['POST'])
 def signup():
     """Handle user signup."""
@@ -344,18 +350,19 @@ def conversation(conversation_id):
             conversation.messages.append(user_message)
             logger.debug(f"Added user message: {user_message}")
 
+            # Use the safe medical profile access function
             patient_info = {
                 'name': user.name,
                 'language': user.language,
                 'gender': user.gender,
-                'age': getattr(user.medical_profile, 'age', 'N/A'),
-                'chronic_conditions': getattr(user.medical_profile, 'chronic_conditions', 'None'),
-                'allergies': getattr(user.medical_profile, 'allergies', 'None'),
-                'region': getattr(user.medical_profile, 'region', 'N/A'),
-                'city': getattr(user.medical_profile, 'city', 'N/A'),
-                'profession': getattr(user.medical_profile, 'profession', 'N/A'),
-                'marital_status': getattr(user.medical_profile, 'marital_status', 'N/A'),
-                'lifestyle': getattr(user.medical_profile, 'lifestyle', {})
+                'age': get_safe_medical_profile_attr(user, 'age', 'N/A'),
+                'chronic_conditions': get_safe_medical_profile_attr(user, 'chronic_conditions', 'None'),
+                'allergies': get_safe_medical_profile_attr(user, 'allergies', 'None'),
+                'region': get_safe_medical_profile_attr(user, 'region', 'N/A'),
+                'city': get_safe_medical_profile_attr(user, 'city', 'N/A'),
+                'profession': get_safe_medical_profile_attr(user, 'profession', 'N/A'),
+                'marital_status': get_safe_medical_profile_attr(user, 'marital_status', 'N/A'),
+                'lifestyle': get_safe_medical_profile_attr(user, 'lifestyle', {})
             }
 
             logger.debug(f"Calling generate_personalized_response with session_id: {session_id}, message: {data['message']}")
@@ -494,18 +501,19 @@ def latest_conversation():
             conversation.messages.append(user_message)
             logger.debug(f"Added user message: {user_message}")
 
+            # Use the safe medical profile access function
             patient_info = {
                 'name': user.name,
                 'language': user.language,
                 'gender': user.gender,
-                'age': getattr(user.medical_profile, 'age', 'N/A'),
-                'chronic_conditions': getattr(user.medical_profile, 'chronic_conditions', 'None'),
-                'allergies': getattr(user.medical_profile, 'allergies', 'None'),
-                'region': getattr(user.medical_profile, 'region', 'N/A'),
-                'city': getattr(user.medical_profile, 'city', 'N/A'),
-                'profession': getattr(user.medical_profile, 'profession', 'N/A'),
-                'marital_status': getattr(user.medical_profile, 'marital_status', 'N/A'),
-                'lifestyle': getattr(user.medical_profile, 'lifestyle', {})
+                'age': get_safe_medical_profile_attr(user, 'age', 'N/A'),
+                'chronic_conditions': get_safe_medical_profile_attr(user, 'chronic_conditions', 'None'),
+                'allergies': get_safe_medical_profile_attr(user, 'allergies', 'None'),
+                'region': get_safe_medical_profile_attr(user, 'region', 'N/A'),
+                'city': get_safe_medical_profile_attr(user, 'city', 'N/A'),
+                'profession': get_safe_medical_profile_attr(user, 'profession', 'N/A'),
+                'marital_status': get_safe_medical_profile_attr(user, 'marital_status', 'N/A'),
+                'lifestyle': get_safe_medical_profile_attr(user, 'lifestyle', {})
             }
 
             logger.debug(f"Calling generate_personalized_response with session_id: {session_id}, message: {data['message']}")
@@ -555,7 +563,7 @@ def latest_conversation():
             logger.error(f"Error saving conversation: {str(e)}")
             return jsonify({'message': f'Error saving conversation: {str(e)}'}), 500
 
-@auth_bp.route('/profile', methods=['GET', 'POST'])
+@auth_bp.route('/profile', methods=['GET'])
 def get_profile():
     """Fetch the user's medical profile."""
     try:
@@ -688,7 +696,7 @@ def save_profile():
         })
         profile.family_history = data.get('familyHistory', profile.family_history or '')
 
-        profile.updated_at = datetime.datetime.utcnow()
+        # updated_at will be set automatically by SQLAlchemy onupdate
         
         try:
             db.session.commit()

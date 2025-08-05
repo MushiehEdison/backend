@@ -83,6 +83,9 @@ class MedicalProfile(db.Model):
         }
     )
     family_history = db.Column(db.Text, nullable=True)
+    # Added the missing updated_at field
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
     user = db.relationship('User', back_populates='medical_profile')
 
@@ -126,7 +129,9 @@ class MedicalProfile(db.Model):
             'lastDentalVisit': self.last_dental_visit.isoformat() if self.last_dental_visit else None,
             'lastEyeExam': self.last_eye_exam.isoformat() if self.last_eye_exam else None,
             'lifestyle': self.lifestyle or {},
-            'family_history': self.family_history
+            'family_history': self.family_history,
+            'created_at': self.created_at.isoformat() if self.created_at else None,
+            'updated_at': self.updated_at.isoformat() if self.updated_at else None
         }
 
 class MessageIndex(db.Model):
@@ -260,7 +265,7 @@ class WorkflowMetric(db.Model):
     recorded_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
 
     def __repr__(self):
-        return f'<WorkflowMetric {self.id} - {metric_name}>'
+        return f'<WorkflowMetric {self.id} - {self.metric_name}>'
 
 class AIPerformance(db.Model):
     __tablename__ = 'ai_performance'

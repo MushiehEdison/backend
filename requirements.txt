@@ -47,6 +47,6 @@ gunicorn==23.0.0
 azure-cognitiveservices-speech==1.40.0
 murf
 textblob
-sklearn
+scikit-learn
 statistics
 typing

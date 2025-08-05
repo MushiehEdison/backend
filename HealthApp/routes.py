@@ -749,6 +749,304 @@ def save_profile():
         logger.error(f"Error saving profile for user_id {user.id if 'user' in locals() else 'unknown'}: {str(e)}")
         return jsonify({'message': f'Error saving profile: {str(e)}'}), 500
 
+
+
+
+
+
+
+def token_required(f):
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        auth_header = request.headers.get('Authorization')
+        logger.debug(f"Verifying token with auth_header: {auth_header}")
+        if not auth_header or not auth_header.startswith('Bearer '):
+            logger.error("Invalid or missing Authorization header")
+            return jsonify({'message': 'Invalid or missing token'}), 401
+
+        token = auth_header.split(' ')[1].strip()
+        if not token:
+            logger.error("Token is empty after splitting Authorization header")
+            return jsonify({'message': 'Token is missing'}), 401
+
+        try:
+            data = jwt.decode(token, current_app.config['SECRET_KEY'], algorithms=['HS256'], options={'verify_exp': True})
+            if not data.get('is_admin', False):
+                logger.warning(f"Non-admin access attempt by user_id: {data.get('user_id', 'unknown')}")
+                return jsonify({'message': 'Admin access required'}), 403
+            logger.debug(f"Admin token verified for user_id: {data.get('user_id', 'admin')}")
+            return f(data, *args, **kwargs)
+        except jwt.ExpiredSignatureError:
+            logger.error("Token has expired")
+            return jsonify({'message': 'Token expired'}), 401
+        except jwt.InvalidTokenError as e:
+            logger.error(f"Invalid token: {str(e)}")
+            return jsonify({'message': 'Invalid token'}), 401
+        except Exception as e:
+            logger.error(f"Unexpected error verifying token: {str(e)}")
+            return jsonify({'message': f'Error: {str(e)}'}), 500
+
+    return decorated
+
+@admin_bp.route('/analytics/symptom_trends', methods=['GET'])
+@token_required
+def get_symptom_trends(token_data):
+    """
+    Fetch symptom trends data for the admin dashboard across all users.
+    Query parameter: time_range (24h, 7d, 30d, 90d)
+    """
+    try:
+        time_range = request.args.get('time_range', '7d')
+        if time_range not in ['24h', '7d', '30d', '90d']:
+            logger.warning(f"Invalid time_range: {time_range}")
+            return jsonify({'message': 'Invalid time range. Use 24h, 7d, 30d, or 90d'}), 400
+
+        analyzer = HealthAnalyzer()
+        data = analyzer.analyze_symptom_trends(time_range)
+        logger.info(f"Retrieved symptom trends for time_range: {time_range}, admin_id: {token_data.get('user_id', 'admin')}")
+        return jsonify(data), 200
+
+    except Exception as e:
+        logger.error(f"Error in get_symptom_trends: {str(e)}")
+        return jsonify({'message': f'Error: {str(e)}'}), 500
+
+@admin_bp.route('/analytics/sentiment', methods=['GET'])
+@token_required
+def get_sentiment_analysis(token_data):
+    """
+    Fetch sentiment analysis data for the admin dashboard across specified conversations.
+    Query parameter: conversation_ids (comma-separated list of IDs)
+    """
+    try:
+        conversation_ids = request.args.get('conversation_ids', '')
+        if not conversation_ids:
+            logger.warning("No conversation IDs provided for sentiment analysis")
+            return jsonify({'message': 'Conversation IDs required'}), 400
+
+        try:
+            conversation_ids = [int(cid) for cid in conversation_ids.split(',')]
+        except ValueError:
+            logger.warning(f"Invalid conversation IDs: {conversation_ids}")
+            return jsonify({'message': 'Invalid conversation IDs'}), 400
+
+        analyzer = HealthAnalyzer()
+        data = analyzer.analyze_sentiment(conversation_ids)
+        logger.info(f"Retrieved sentiment analysis for {len(conversation_ids)} conversations, admin_id: {token_data.get('user_id', 'admin')}")
+        return jsonify(data), 200
+
+    except Exception as e:
+        logger.error(f"Error in get_sentiment_analysis: {str(e)}")
+        return jsonify({'message': f'Error: {str(e)}'}), 500
+
+@admin_bp.route('/analytics/diagnostic_patterns', methods=['GET'])
+@token_required
+def get_diagnostic_patterns(token_data):
+    """
+    Fetch diagnostic patterns data for the admin dashboard across all users.
+    Query parameter: time_range (24h, 7d, 30d, 90d)
+    """
+    try:
+        time_range = request.args.get('time_range', '7d')
+        if time_range not in ['24h', '7d', '30d', '90d']:
+            logger.warning(f"Invalid time_range: {time_range}")
+            return jsonify({'message': 'Invalid time range. Use 24h, 7d, 30d, or 90d'}), 400
+
+        analyzer = HealthAnalyzer()
+        data = analyzer.analyze_diagnostic_patterns(time_range)
+        logger.info(f"Retrieved diagnostic patterns for time_range: {time_range}, admin_id: {token_data.get('user_id', 'admin')}")
+        return jsonify(data), 200
+
+    except Exception as e:
+        logger.error(f"Error in get_diagnostic_patterns: {str(e)}")
+        return jsonify({'message': f'Error: {str(e)}'}), 500
+
+@admin_bp.route('/analytics/communication_metrics', methods=['GET'])
+@token_required
+def get_communication_metrics(token_data):
+    """
+    Fetch communication metrics data for the admin dashboard across all users.
+    Query parameter: time_range (24h, 7d, 30d, 90d)
+    """
+    try:
+        time_range = request.args.get('time_range', '7d')
+        if time_range not in ['24h', '7d', '30d', '90d']:
+            logger.warning(f"Invalid time_range: {time_range}")
+            return jsonify({'message': 'Invalid time range. Use 24h, 7d, 30d, or 90d'}), 400
+
+        analyzer = HealthAnalyzer()
+        data = analyzer.analyze_communication_metrics(time_range)
+        logger.info(f"Retrieved communication metrics for time_range: {time_range}, admin_id: {token_data.get('user_id', 'admin')}")
+        return jsonify(data), 200
+
+    except Exception as e:
+        logger.error(f"Error in get_communication_metrics: {str(e)}")
+        return jsonify({'message': f'Error: {str(e)}'}), 500
+
+@admin_bp.route('/analytics/user_activity', methods=['GET'])
+@token_required
+def get_user_activity(token_data):
+    """
+    Fetch user activity data for the admin dashboard across all users.
+    Query parameter: time_range (24h, 7d)
+    """
+    try:
+        time_range = request.args.get('time_range', '24h')
+        if time_range not in ['24h', '7d']:
+            logger.warning(f"Invalid time_range: {time_range}")
+            return jsonify({'message': 'Invalid time range. Use 24h or 7d'}), 400
+
+        analyzer = HealthAnalyzer()
+        data = analyzer.analyze_user_activity(time_range)
+        logger.info(f"Retrieved user activity for time_range: {time_range}, admin_id: {token_data.get('user_id', 'admin')}")
+        return jsonify(data), 200
+
+    except Exception as e:
+        logger.error(f"Error in get_user_activity: {str(e)}")
+        return jsonify({'message': f'Error: {str(e)}'}), 500
+
+@admin_bp.route('/analytics/health_alerts', methods=['GET'])
+@token_required
+def get_health_alerts(token_data):
+    """
+    Fetch health alerts data for the admin dashboard across all users.
+    """
+    try:
+        analyzer = HealthAnalyzer()
+        data = analyzer.generate_health_alerts()
+        logger.info(f"Retrieved {len(data)} health alerts, admin_id: {token_data.get('user_id', 'admin')}")
+        return jsonify(data), 200
+
+    except Exception as e:
+        logger.error(f"Error in get_health_alerts: {str(e)}")
+        return jsonify({'message': f'Error: {str(e)}'}), 500
+
+@admin_bp.route('/analytics/treatment_preferences', methods=['GET'])
+@token_required
+def get_treatment_preferences(token_data):
+    """
+    Fetch treatment preferences data for the admin dashboard across all users.
+    Query parameter: time_range (24h, 7d, 30d, 90d)
+    """
+    try:
+        time_range = request.args.get('time_range', '7d')
+        if time_range not in ['24h', '7d', '30d', '90d']:
+            logger.warning(f"Invalid time_range: {time_range}")
+            return jsonify({'message': 'Invalid time range. Use 24h, 7d, 30d, or 90d'}), 400
+
+        analyzer = HealthAnalyzer()
+        data = analyzer.analyze_treatment_preferences(time_range)
+        logger.info(f"Retrieved treatment preferences for time_range: {time_range}, admin_id: {token_data.get('user_id', 'admin')}")
+        return jsonify(data), 200
+
+    except Exception as e:
+        logger.error(f"Error in get_treatment_preferences: {str(e)}")
+        return jsonify({'message': f'Error: {str(e)}'}), 500
+
+@admin_bp.route('/analytics/health_literacy', methods=['GET'])
+@token_required
+def get_health_literacy(token_data):
+    """
+    Fetch health literacy data for the admin dashboard across all users.
+    Query parameter: time_range (24h, 7d, 30d, 90d)
+    """
+    try:
+        time_range = request.args.get('time_range', '7d')
+        if time_range not in ['24h', '7d', '30d', '90d']:
+            logger.warning(f"Invalid time_range: {time_range}")
+            return jsonify({'message': 'Invalid time range. Use 24h, 7d, 30d, or 90d'}), 400
+
+        analyzer = HealthAnalyzer()
+        data = analyzer.analyze_health_literacy(time_range)
+        logger.info(f"Retrieved health literacy data for time_range: {time_range}, admin_id: {token_data.get('user_id', 'admin')}")
+        return jsonify(data), 200
+
+    except Exception as e:
+        logger.error(f"Error in get_health_literacy: {str(e)}")
+        return jsonify({'message': f'Error: {str(e)}'}), 500
+
+@admin_bp.route('/analytics/workflow_metrics', methods=['GET'])
+@token_required
+def get_workflow_metrics(token_data):
+    """
+    Fetch workflow metrics data for the admin dashboard across all users.
+    Query parameter: time_range (24h, 7d, 30d, 90d)
+    """
+    try:
+        time_range = request.args.get('time_range', '7d')
+        if time_range not in ['24h', '7d', '30d', '90d']:
+            logger.warning(f"Invalid time_range: {time_range}")
+            return jsonify({'message': 'Invalid time range. Use 24h, 7d, 30d, or 90d'}), 400
+
+        analyzer = HealthAnalyzer()
+        data = analyzer.analyze_workflow_metrics(time_range)
+        logger.info(f"Retrieved workflow metrics for time_range: {time_range}, admin_id: {token_data.get('user_id', 'admin')}")
+        return jsonify(data), 200
+
+    except Exception as e:
+        logger.error(f"Error in get_workflow_metrics: {str(e)}")
+        return jsonify({'message': f'Error: {str(e)}'}), 500
+
+@admin_bp.route('/analytics/ai_performance', methods=['GET'])
+@token_required
+def get_ai_performance(token_data):
+    """
+    Fetch AI performance metrics data for the admin dashboard across all users.
+    Query parameter: time_range (24h, 7d, 30d, 90d)
+    """
+    try:
+        time_range = request.args.get('time_range', '7d')
+        if time_range not in ['24h', '7d', '30d', '90d']:
+            logger.warning(f"Invalid time_range: {time_range}")
+            return jsonify({'message': 'Invalid time range. Use 24h, 7d, 30d, or 90d'}), 400
+
+        analyzer = HealthAnalyzer()
+        data = analyzer.analyze_ai_performance(time_range)
+        logger.info(f"Retrieved AI performance metrics for time_range: {time_range}, admin_id: {token_data.get('user_id', 'admin')}")
+        return jsonify(data), 200
+
+    except Exception as e:
+        logger.error(f"Error in get_ai_performance: {str(e)}")
+        return jsonify({'message': f'Error: {str(e)}'}), 500
+
+@admin_bp.route('/analytics/conversations', methods=['GET'])
+@token_required
+def get_all_conversations(token_data):
+    """
+    Fetch all conversations across all users for the admin dashboard (for sentiment analysis).
+    Query parameters: page (default 1), per_page (default 10)
+    """
+    try:
+        page = int(request.args.get('page', 1))
+        per_page = int(request.args.get('per_page', 10))
+
+        conversations = Conversation.query\
+            .filter(Conversation.messages != None)\
+            .filter(db.cast(Conversation.messages, db.Text) != '[]')\
+            .order_by(Conversation.updated_at.desc().nullslast())\
+            .paginate(page=page, per_page=per_page, error_out=False)
+
+        data = {
+            'conversations': [{
+                'id': conv.id,
+                'user_id': conv.user_id,
+                'created_at': conv.created_at.isoformat(),
+                'updated_at': conv.updated_at.isoformat() if conv.updated_at else None,
+                'preview': conv.messages[-1]['text'][:100] if conv.messages else 'No messages'
+            } for conv in conversations.items],
+            'total': conversations.total,
+            'pages': conversations.pages,
+            'current_page': page
+        }
+        logger.info(f"Retrieved {len(data['conversations'])} conversations, admin_id: {token_data.get('user_id', 'admin')}")
+        return jsonify(data), 200
+
+    except Exception as e:
+        logger.error(f"Error in get_all_conversations: {str(e)}")
+        return jsonify({'message': f'Error: {str(e)}'}), 500
+
+
+
+
 @auth_bp.route('/ping', methods=['GET'])
 def ping():
     """Health check endpoint to keep the service alive."""

@@ -30,8 +30,6 @@ class Conversation(db.Model):
     messages = db.Column(JSON, nullable=False, default=[])
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-    sentiment_score = db.Column(db.Float, nullable=True)
-    completion_status = db.Column(db.String(20), default='in_progress', nullable=False)
 
     user = db.relationship('User', back_populates='conversations')
     message_indices = db.relationship('MessageIndex', back_populates='conversation', lazy=True)
@@ -83,9 +81,6 @@ class MedicalProfile(db.Model):
         }
     )
     family_history = db.Column(db.Text, nullable=True)
-    # Added the missing updated_at field
-    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
-    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
     user = db.relationship('User', back_populates='medical_profile')
 
@@ -129,9 +124,7 @@ class MedicalProfile(db.Model):
             'lastDentalVisit': self.last_dental_visit.isoformat() if self.last_dental_visit else None,
             'lastEyeExam': self.last_eye_exam.isoformat() if self.last_eye_exam else None,
             'lifestyle': self.lifestyle or {},
-            'family_history': self.family_history,
-            'created_at': self.created_at.isoformat() if self.created_at else None,
-            'updated_at': self.updated_at.isoformat() if self.updated_at else None
+            'family_history': self.family_history
         }
 
 class MessageIndex(db.Model):

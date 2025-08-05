@@ -9,7 +9,6 @@ from .models import (
     Conversation, UserSession, SymptomEntry, Diagnosis, SentimentRecord,
     CommunicationMetric, TreatmentPreference, HealthLiteracy, WorkflowMetric, AIPerformance, HealthAlert
 )
-from groq import Groq
 import json
 import re
 from collections import defaultdict

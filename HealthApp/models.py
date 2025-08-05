@@ -260,7 +260,7 @@ class WorkflowMetric(db.Model):
     recorded_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
 
     def __repr__(self):
-        return f'<WorkflowMetric {self.id} - {self.metric_name}>'
+        return f'<WorkflowMetric {self.id} - {metric_name}>'
 
 class AIPerformance(db.Model):
     __tablename__ = 'ai_performance'

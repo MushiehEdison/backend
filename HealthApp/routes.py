@@ -4,9 +4,9 @@ import datetime
 from datetime import timezone
 import uuid
 import logging
-from functools import wraps  # Add this import
+from functools import wraps
 from . import db, bcrypt
-from .models import User, Conversation, MedicalProfile
+from .models import User, Conversation, MedicalProfile, UserSession
 from flask_jwt_extended import jwt_required
 from .ai_engine import generate_personalized_response
 from .analysis import HealthAnalyzer
@@ -752,7 +752,6 @@ def save_profile():
         logger.error(f"Error saving profile for user_id {user.id if 'user' in locals() else 'unknown'}: {str(e)}")
         return jsonify({'message': f'Error saving profile: {str(e)}'}), 500
 
-
 def token_required(f):
     @wraps(f)
     def decorated(*args, **kwargs):
@@ -782,6 +781,68 @@ def token_required(f):
             return jsonify({'message': f'Error: {str(e)}'}), 500
 
     return decorated
+
+@admin_bp.route('/users', methods=['GET'])
+@token_required
+def get_users(token_data):
+    """
+    Fetch all users for the admin dashboard with pagination.
+    Query parameters: page (default 1), per_page (default 10)
+    """
+    if not token_data.get('is_admin', False):
+        logger.warning(f"Non-admin access attempt by user_id: {token_data.get('user_id', 'unknown')}")
+        return jsonify({'message': 'Admin access required'}), 403
+    try:
+        page = int(request.args.get('page', 1))
+        per_page = int(request.args.get('per_page', 10))
+
+        # Query users with their session data
+        users_query = User.query.order_by(User.created_at.desc())
+        paginated_users = users_query.paginate(page=page, per_page=per_page, error_out=False)
+        users = paginated_users.items
+        total = paginated_users.total
+        pages = paginated_users.pages
+
+        user_data = []
+        for user in users:
+            # Calculate session metrics
+            sessions = UserSession.query.filter_by(user_id=user.id).all()
+            total_sessions = len(sessions)
+            avg_session_time = 0
+            if sessions:
+                session_durations = [
+                    (s.end_time - s.start_time).total_seconds() / 60
+                    for s in sessions if s.end_time
+                ]
+                avg_session_time = round(mean(session_durations), 1) if session_durations else 0
+
+            # Determine last active and status
+            last_session = UserSession.query.filter_by(user_id=user.id)\
+                .order_by(UserSession.start_time.desc()).first()
+            last_active = last_session.start_time if last_session else None
+            status = 'active' if last_active and (datetime.datetime.now(timezone.utc) - last_active).days < 30 else 'inactive'
+
+            user_data.append({
+                'id': user.id,
+                'name': user.name,
+                'email': user.email,
+                'joined_at': user.created_at.isoformat(),
+                'status': status,
+                'last_active': last_active.isoformat() if last_active else None,
+                'total_sessions': total_sessions,
+                'avg_session_time': avg_session_time
+            })
+
+        logger.info(f"Fetched {len(user_data)} users for admin_id: {token_data.get('user_id', 'admin')}, page: {page}")
+        return jsonify({
+            'users': user_data,
+            'total': total,
+            'pages': pages,
+            'current_page': page
+        }), 200
+    except Exception as e:
+        logger.error(f"Error in get_users: {str(e)}")
+        return jsonify({'message': f'Error: {str(e)}'}), 500
 
 @admin_bp.route('/analytics/symptom_trends', methods=['GET'])
 @token_required
@@ -1060,7 +1121,6 @@ def get_all_conversations(token_data):
     except Exception as e:
         logger.error(f"Error in get_all_conversations: {str(e)}")
         return jsonify({'message': f'Error: {str(e)}'}), 500
-
 
 @auth_bp.route('/ping', methods=['GET'])
 def ping():

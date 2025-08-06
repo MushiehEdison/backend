@@ -14,6 +14,8 @@ import re
 from collections import defaultdict
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.cluster import KMeans
+from sklearn.linear_model import LogisticRegression
+from sklearn.preprocessing import LabelEncoder
 from textblob import TextBlob
 import os
 from typing import Dict, List, Any, Optional
@@ -28,13 +30,20 @@ GROQ_API_KEY = os.getenv('GROQ_API_KEY')
 if not GROQ_API_KEY:
     logger.error("GROQ_API_KEY not found in environment variables")
     raise ValueError("GROQ_API_KEY is required")
-client = GROQ_API_KEY
+from groq import Groq
+client = Groq(api_key=GROQ_API_KEY)
 
 class HealthAnalyzer:
     def __init__(self, n_clusters: int = 5):
         self.vectorizer = TfidfVectorizer(stop_words='english', max_features=1000)
         self.kmeans = KMeans(n_clusters=n_clusters, random_state=42)
         self.default_time_range = '7d'
+        # Initialize ML model for conversation learning
+        self.intent_classifier = LogisticRegression(random_state=42)
+        self.label_encoder = LabelEncoder()
+        self.conversation_vectors = []
+        self.conversation_labels = []
+        self.is_trained = False
 
     def _get_start_date(self, time_range: str) -> datetime:
         """Helper method to determine start date based on time range."""
@@ -50,6 +59,72 @@ class HealthAnalyzer:
         except Exception as e:
             logger.error(f"Error calculating start date for {time_range}: {str(e)}")
             return datetime.utcnow() - timedelta(days=7)
+
+    def train_conversation_model(self, conversations: List[Dict[str, Any]]) -> None:
+        """
+        Train a lightweight ML model on conversation data to predict intents/topics.
+        """
+        try:
+            if not conversations:
+                logger.warning("No conversations provided for training")
+                return
+
+            texts = []
+            labels = []
+            for convo in conversations:
+                if not convo.messages:
+                    continue
+                user_messages = [msg['text'] for msg in convo.messages if msg.get('isUser', False)]
+                if not user_messages:
+                    continue
+                text = " ".join(user_messages[:5])  # Limit to first 5 messages to avoid memory issues
+                texts.append(text)
+                
+                # Extract simple intent labels based on keywords
+                text_lower = text.lower()
+                if any(keyword in text_lower for keyword in ['fever', 'cough', 'headache', 'pain']):
+                    labels.append('symptom_report')
+                elif any(keyword in text_lower for keyword in ['treatment', 'medication', 'therapy']):
+                    labels.append('treatment_inquiry')
+                elif any(keyword in text_lower for keyword in ['doctor', 'appointment', 'consult']):
+                    labels.append('consultation_request')
+                else:
+                    labels.append('general_inquiry')
+
+            if not texts or len(texts) < 2:
+                logger.warning("Insufficient data for training conversation model")
+                return
+
+            # Vectorize texts
+            X = self.vectorizer.fit_transform(texts)
+            self.conversation_vectors = X.toarray()
+            self.conversation_labels = self.label_encoder.fit_transform(labels)
+            
+            # Train the model
+            self.intent_classifier.fit(self.conversation_vectors, self.conversation_labels)
+            self.is_trained = True
+            logger.info(f"Trained conversation model with {len(texts)} samples, {len(set(labels))} unique intents")
+        except Exception as e:
+            logger.error(f"Error training conversation model: {str(e)}")
+            self.is_trained = False
+
+    def predict_conversation_intent(self, message: str) -> str:
+        """
+        Predict the intent of a new message using the trained model.
+        """
+        try:
+            if not self.is_trained:
+                logger.warning("Conversation model not trained, returning default intent")
+                return 'general_inquiry'
+            
+            X = self.vectorizer.transform([message]).toarray()
+            predicted_label = self.intent_classifier.predict(X)[0]
+            intent = self.label_encoder.inverse_transform([predicted_label])[0]
+            logger.debug(f"Predicted intent for message '{message[:50]}...': {intent}")
+            return intent
+        except Exception as e:
+            logger.error(f"Error predicting conversation intent: {str(e)}")
+            return 'general_inquiry'
 
     def analyze_symptom_trends(self, time_range: str = '7d') -> List[Dict[str, Any]]:
         """
@@ -298,12 +373,12 @@ class HealthAnalyzer:
             else:
                 metrics = [
                     {
-                        'metric': m.metric_name,
-                        'current': float(m.current_value),
-                        'previous': float(m.previous_value) if m.previous_value else 0,
-                        'trend': m.trend or 'stable'
+                        'metric': metric.metric_name,
+                        'current': float(metric.current_value),
+                        'previous': float(metric.previous_value) if metric.previous_value else 0,
+                        'trend': metric.trend or 'stable'
                     }
-                    for m in metrics
+                    for metric in metrics
                 ]
 
             # Statistical analysis
@@ -441,37 +516,38 @@ class HealthAnalyzer:
             start_date = self._get_start_date(time_range)
             preferences = db.session.query(
                 TreatmentPreference.treatment_type,
-                func.avg(TreatmentPreference.preference_score).label('avg_score'),
-                TreatmentPreference.trend
+                func.count().label('count'),
+                func.avg(TreatmentPreference.patient_satisfaction).label('avg_satisfaction')
             ).filter(
-                TreatmentPreference.recorded_at >= start_date,
-                TreatmentPreference.recorded_at <= datetime.utcnow()
+                TreatmentPreference.created_at >= start_date,
+                TreatmentPreference.created_at <= datetime.utcnow()
             ).group_by(
-                TreatmentPreference.treatment_type,
-                TreatmentPreference.trend
+                TreatmentPreference.treatment_type
             ).all()
 
             if not preferences:
-                logger.warning(f"No treatment preferences found for {time_range}")
+                logger.warning(f"No treatment preferences found for time range: {time_range}")
                 return []
 
             # Convert to DataFrame for analysis
             df = pd.DataFrame(
-                [(p.treatment_type, p.avg_score, p.trend) for p in preferences],
-                columns=['treatment', 'score', 'trend']
+                [(p.treatment_type, p.count, p.avg_satisfaction) for p in preferences],
+                columns=['treatment', 'count', 'satisfaction']
             )
-            df['percentage'] = df['score'].apply(lambda x: round(x * 100, 1))
+            df['satisfaction'] = df['satisfaction'].apply(lambda x: round(x * 100, 1) if x else 0)
 
+            # Calculate trends
             result = [
                 {
                     'treatment': row.treatment,
-                    'percentage': row.percentage,
-                    'trend': row.trend or 'stable'
+                    'count': int(row.count),
+                    'satisfaction': row.satisfaction,
+                    'trend': 'up' if row.count > df['count'].mean() else 'down'
                 }
                 for _, row in df.iterrows()
             ]
 
-            logger.info(f"Treatment preferences for {time_range}: {len(result)} treatments, mean score={df.score.mean():.2f}")
+            logger.info(f"Treatment preferences for {time_range}: {len(result)} types, mean count={df['count'].mean():.1f}")
             return result
 
         except SQLAlchemyError as e:
@@ -483,44 +559,43 @@ class HealthAnalyzer:
 
     def analyze_health_literacy(self, time_range: str = '7d') -> List[Dict[str, Any]]:
         """
-        Analyze health literacy by demographics with statistical insights.
-        Returns data for the dashboard's health literacy chart.
+        Analyze health literacy metrics with statistical analysis.
+        Returns data for the dashboard's health literacy section.
         """
         try:
             start_date = self._get_start_date(time_range)
-            literacy_data = db.session.query(
-                HealthLiteracy.age_group,
-                func.avg(HealthLiteracy.understanding_rate).label('avg_understanding'),
-                func.avg(HealthLiteracy.engagement_rate).label('avg_engagement')
+            literacy_records = db.session.query(
+                HealthLiteracy.metric_name,
+                func.avg(HealthLiteracy.score).label('avg_score')
             ).filter(
-                HealthLiteracy.recorded_at >= start_date,
-                HealthLiteracy.recorded_at <= datetime.utcnow()
+                HealthLiteracy.created_at >= start_date,
+                HealthLiteracy.created_at <= datetime.utcnow()
             ).group_by(
-                HealthLiteracy.age_group
+                HealthLiteracy.metric_name
             ).all()
 
-            if not literacy_data:
-                logger.warning(f"No health literacy data for {time_range}")
+            if not literacy_records:
+                logger.warning(f"No health literacy data found for time range: {time_range}")
                 return []
 
-            # Convert to DataFrame for analysis
+            # Convert to DataFrame
             df = pd.DataFrame(
-                [(d.age_group, d.avg_understanding, d.avg_engagement) for d in literacy_data],
-                columns=['group', 'understanding', 'engagement']
+                [(r.metric_name, r.avg_score) for r in literacy_records],
+                columns=['metric', 'score']
             )
-            df['understanding'] = df['understanding'].apply(lambda x: round(x, 1))
-            df['engagement'] = df['engagement'].apply(lambda x: round(x, 1))
+            df['score'] = df['score'].apply(lambda x: round(x * 100, 1) if x else 0)
 
+            # Format result
             result = [
                 {
-                    'group': row.group,
-                    'understanding': row.understanding,
-                    'engagement': row.engagement
+                    'metric': row.metric,
+                    'score': row.score,
+                    'trend': 'up' if row.score > df['score'].mean() else 'down'
                 }
                 for _, row in df.iterrows()
             ]
 
-            logger.info(f"Health literacy for {time_range}: {len(result)} age groups, mean understanding={df.understanding.mean():.1f}")
+            logger.info(f"Health literacy for {time_range}: {len(result)} metrics, mean score={df['score'].mean():.1f}")
             return result
 
         except SQLAlchemyError as e:
@@ -532,42 +607,45 @@ class HealthAnalyzer:
 
     def analyze_workflow_metrics(self, time_range: str = '7d') -> List[Dict[str, Any]]:
         """
-        Analyze workflow metrics with statistical changes.
+        Analyze workflow metrics with statistical insights.
         Returns data for the dashboard's workflow metrics section.
         """
         try:
             start_date = self._get_start_date(time_range)
             metrics = db.session.query(
                 WorkflowMetric.metric_name,
-                WorkflowMetric.value,
-                WorkflowMetric.change_percentage
+                func.avg(WorkflowMetric.value).label('avg_value'),
+                func.count().label('count')
             ).filter(
-                WorkflowMetric.recorded_at >= start_date,
-                WorkflowMetric.recorded_at <= datetime.utcnow()
+                WorkflowMetric.created_at >= start_date,
+                WorkflowMetric.created_at <= datetime.utcnow()
+            ).group_by(
+                WorkflowMetric.metric_name
             ).all()
 
             if not metrics:
-                logger.warning(f"No workflow metrics for {time_range}")
+                logger.warning(f"No workflow metrics found for time range: {time_range}")
                 return []
 
-            # Convert to DataFrame for analysis
+            # Convert to DataFrame
             df = pd.DataFrame(
-                [(m.metric_name, m.value, m.change_percentage) for m in metrics],
-                columns=['metric', 'value', 'change']
+                [(m.metric_name, m.avg_value, m.count) for m in metrics],
+                columns=['metric', 'value', 'count']
             )
-            df['value'] = df['value'].apply(lambda x: round(x, 1))
-            df['change'] = df['change'].apply(lambda x: round(x, 1) if x is not None else 0)
+            df['value'] = df['value'].apply(lambda x: round(x, 1) if x else 0)
 
+            # Format result
             result = [
                 {
                     'metric': row.metric,
                     'value': row.value,
-                    'change': row.change
+                    'count': int(row.count),
+                    'trend': 'up' if row.value > df['value'].mean() else 'down'
                 }
                 for _, row in df.iterrows()
             ]
 
-            logger.info(f"Workflow metrics for {time_range}: {len(result)} metrics, mean value={df.value.mean():.1f}")
+            logger.info(f"Workflow metrics for {time_range}: {len(result)} metrics, mean value={df['value'].mean():.1f}")
             return result
 
         except SQLAlchemyError as e:
@@ -579,39 +657,45 @@ class HealthAnalyzer:
 
     def analyze_ai_performance(self, time_range: str = '7d') -> List[Dict[str, Any]]:
         """
-        Analyze AI performance metrics with statistical insights.
+        Analyze AI performance metrics with statistical analysis.
         Returns data for the dashboard's AI performance section.
         """
         try:
             start_date = self._get_start_date(time_range)
             performance = db.session.query(
                 AIPerformance.metric_name,
-                AIPerformance.value
+                func.avg(AIPerformance.value).label('avg_value'),
+                func.count().label('count')
             ).filter(
-                AIPerformance.recorded_at >= start_date,
-                AIPerformance.recorded_at <= datetime.utcnow()
+                AIPerformance.created_at >= start_date,
+                AIPerformance.created_at <= datetime.utcnow()
+            ).group_by(
+                AIPerformance.metric_name
             ).all()
 
             if not performance:
-                logger.warning(f"No AI performance data for {time_range}")
+                logger.warning(f"No AI performance data found for time range: {time_range}")
                 return []
 
-            # Convert to DataFrame for analysis
+            # Convert to DataFrame
             df = pd.DataFrame(
-                [(p.metric_name, p.value) for p in performance],
-                columns=['metric', 'value']
+                [(p.metric_name, p.avg_value, p.count) for p in performance],
+                columns=['metric', 'value', 'count']
             )
-            df['value'] = df['value'].apply(lambda x: round(x, 1))
+            df['value'] = df['value'].apply(lambda x: round(x * 100, 1) if x else 0)
 
+            # Format result
             result = [
                 {
                     'metric': row.metric,
-                    'value': row.value
+                    'value': row.value,
+                    'count': int(row.count),
+                    'trend': 'up' if row.value > df['value'].mean() else 'down'
                 }
                 for _, row in df.iterrows()
             ]
 
-            logger.info(f"AI performance for {time_range}: {len(result)} metrics, mean value={df.value.mean():.1f}")
+            logger.info(f"AI performance for {time_range}: {len(result)} metrics, mean value={df['value'].mean():.1f}")
             return result
 
         except SQLAlchemyError as e:
@@ -621,104 +705,80 @@ class HealthAnalyzer:
             logger.error(f"Unexpected error in analyze_ai_performance: {str(e)}")
             return []
 
-    def extract_symptoms_and_diagnoses(self, message: str, patient_info: Dict[str, Any], session_id: str) -> Dict[str, Any]:
-        """
-        Extract symptoms and diagnoses using Grok API and ML clustering.
-        Returns data for storage and analysis.
-        """
-        try:
-            prompt = f"""
-            Analyze the following health-related message for symptoms and potential diagnoses.
-            Patient Info: {json.dumps(patient_info, indent=2)}
-            Message: {message}
-            Return a JSON object with:
-            - symptoms: List of dictionaries with 'name', 'severity' (low, medium, high), 'location' (optional)
-            - diagnoses: List of dictionaries with 'condition_name', 'accuracy' (0-1), 'requires_attention' (boolean)
-            """
-            response = client.chat.completions.create(
-                model="mixtral-8x7b-32768",
-                messages=[{"role": "system", "content": prompt}],
-                max_tokens=500
-            )
-            result = json.loads(response.choices[0].message.content)
-
-            # Validate result structure
-            result = {
-                'symptoms': result.get('symptoms', []),
-                'diagnoses': result.get('diagnoses', [])
-            }
-
-            # Store in database
-            convo_id = int(session_id.split('_')[-1])
-            for symptom in result['symptoms']:
-                db.session.add(SymptomEntry(
-                    convo_id=convo_id,
-                    symptom_name=symptom.get('name', 'Unknown'),
-                    severity=symptom.get('severity', 'medium'),
-                    location=symptom.get('location', None),
-                    reported_at=datetime.utcnow()
-                ))
-
-            for diagnosis in result['diagnoses']:
-                db.session.add(Diagnosis(
-                    convo_id=convo_id,
-                    condition_name=diagnosis.get('condition_name', 'Unknown'),
-                    accuracy=diagnosis.get('accuracy', 0.5),
-                    requires_attention=diagnosis.get('requires_attention', False),
-                    created_at=datetime.utcnow()
-                ))
-
-            db.session.commit()
-            logger.info(f"Extracted {len(result['symptoms'])} symptoms and {len(result['diagnoses'])} diagnoses")
-            return result
-
-        except SQLAlchemyError as e:
-            logger.error(f"Database error in extract_symptoms_and_diagnoses: {str(e)}")
-            db.session.rollback()
-            return {'symptoms': [], 'diagnoses': []}
-        except Exception as e:
-            logger.error(f"Unexpected error in extract_symptoms_and_diagnoses: {str(e)}")
-            return {'symptoms': [], 'diagnoses': []}
-
 def generate_personalized_response(message: str, patient_info: Dict[str, Any], session_id: str, conversation_history: List[Dict[str, Any]]) -> str:
     """
-    Generate a personalized response using Grok API, incorporating patient info and history.
-    Also extracts symptoms and diagnoses for analysis.
+    Generate a personalized response using Grok API, enhanced with ML intent prediction.
     """
     try:
+        # Initialize HealthAnalyzer for intent prediction
         analyzer = HealthAnalyzer()
-        analysis_result = analyzer.extract_symptoms_and_diagnoses(message, patient_info, session_id)
+        
+        # Train the model with recent conversations (simplified for this example)
+        recent_convos = Conversation.query.order_by(Conversation.updated_at.desc()).limit(100).all()
+        analyzer.train_conversation_model(recent_convos)
 
-        # Prepare conversation history
-        history_context = "\n".join([f"{'User' if msg.get('isUser', False) else 'AI'}: {msg.get('text', '')}" for msg in conversation_history[-5:]])
+        # Predict intent for the current message
+        intent = analyzer.predict_conversation_intent(message)
+        logger.debug(f"Predicted intent: {intent}")
 
-        # Prepare prompt
-        prompt = f"""
-        You are a medical AI assistant for Healia, providing accurate and empathetic responses.
-        Patient Info: {json.dumps(patient_info, indent=2)}
+        # Build context for the Grok API
+        context = f"""
+        Patient Profile:
+        - Name: {patient_info.get('name', 'N/A')}
+        - Age: {patient_info.get('age', 'N/A')}
+        - Gender: {patient_info.get('gender', 'N/A')}
+        - Chronic Conditions: {patient_info.get('chronic_conditions', 'None')}
+        - Allergies: {patient_info.get('allergies', 'None')}
+        - Region: {patient_info.get('region', 'N/A')}
+        - Language: {patient_info.get('language', 'en')}
+        - Predicted Intent: {intent}
+
         Conversation History:
-        {history_context}
-        Current Message: {message}
-        Analysis Results:
-        Symptoms: {json.dumps(analysis_result.get('symptoms', []), indent=2)}
-        Diagnoses: {json.dumps(analysis_result.get('diagnoses', []), indent=2)}
-        Provide a professional, empathetic, and accurate response. Include medical advice if appropriate, and suggest consulting a healthcare provider for serious conditions. Return only the response text.
+        {json.dumps(conversation_history[-5:], indent=2)}  # Limit to last 5 messages
+        """
+
+        # Customize prompt based on intent
+        intent_prompts = {
+            'symptom_report': "The user is reporting symptoms. Provide a detailed, empathetic response with possible causes and general advice, but clarify that this is not a substitute for professional medical advice.",
+            'treatment_inquiry': "The user is asking about treatments or medications. Provide clear, general information about treatment options, considering their profile, and recommend consulting a healthcare provider.",
+            'consultation_request': "The user is seeking consultation or appointment information. Provide guidance on how to seek professional medical help and any relevant regional resources.",
+            'general_inquiry': "The user has a general health-related question. Provide a clear, concise, and informative response tailored to their profile."
+        }
+
+        prompt = f"""
+        You are a medical assistant AI. Based on the following context, generate a personalized, empathetic, and accurate response to the user's message: '{message}'.
+        {context}
+        Instructions:
+        - {intent_prompts.get(intent, intent_prompts['general_inquiry'])}
+        - Use the patient's language ({patient_info.get('language', 'en')}).
+        - Avoid diagnosing or prescribing treatments.
+        - Keep the response under 500 words.
+        - Include a disclaimer about consulting a healthcare professional.
         """
 
         response = client.chat.completions.create(
             model="mixtral-8x7b-32768",
-            messages=[{"role": "system", "content": prompt}],
-            max_tokens=1000
+            messages=[
+                {"role": "system", "content": prompt},
+                {"role": "user", "content": message}
+            ],
+            max_tokens=500
         )
 
         response_text = response.choices[0].message.content.strip()
-        if not response_text:
-            logger.warning("Empty response from Grok API")
-            return "I'm sorry, I couldn't generate a response. Please try again."
+        logger.info(f"Generated response for session {session_id}: {response_text[:100]}...")
+        
+        # Store AI performance metric
+        db.session.add(AIPerformance(
+            metric_name='response_quality',
+            value=1.0,  # Placeholder: could be based on user feedback or TextBlob analysis
+            created_at=datetime.utcnow(),
+            session_id=session_id
+        ))
+        db.session.commit()
 
-        logger.info(f"Generated personalized response: {response_text[:100]}...")
         return response_text
 
     except Exception as e:
         logger.error(f"Error generating personalized response: {str(e)}")
-        return "I'm sorry, I couldn't process your request due to an issue with the AI service. Please try again later."
+        return "I'm sorry, I couldn't process your request at this time. Please try again later or consult a healthcare professional."

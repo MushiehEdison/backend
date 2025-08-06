@@ -6,9 +6,9 @@ import uuid
 import logging
 from . import db, bcrypt
 from .models import User, Conversation, MedicalProfile
+from flask_jwt_extended import jwt_required
 from .ai_engine import generate_personalized_response
 from .analysis import HealthAnalyzer
-
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -47,8 +47,6 @@ def verify_user_from_token(auth_header):
         return None
     try:
         decoded = jwt.decode(token, current_app.config['SECRET_KEY'], algorithms=['HS256'], options={'verify_exp': True})
-        if decoded['user_id'] == 'admin':
-            return {'id': 'admin', 'email': 'admin@healia.com', 'is_admin': True}
         user = User.query.get(decoded['user_id'])
         if not user:
             logger.error(f"User not found for user_id: {decoded['user_id']}")
@@ -108,7 +106,6 @@ def signup():
 
         token = jwt.encode({
             'user_id': new_user.id,
-            'is_admin': False,
             'exp': datetime.datetime.now(timezone.utc) + datetime.timedelta(days=1)
         }, current_app.config['SECRET_KEY'], algorithm='HS256')
 
@@ -122,10 +119,10 @@ def signup():
                 'email': new_user.email,
                 'phone': new_user.phone,
                 'language': new_user.language,
-                'gender': new_user.gender,
-                'is_admin': False
+                'gender': new_user.gender
             }
         }), 201
+
     except Exception as e:
         db.session.rollback()
         logger.error(f"Error during signup: {str(e)}")
@@ -141,13 +138,17 @@ def signin():
             logger.error("Missing email or password")
             return jsonify({'message': 'Missing email or password'}), 400
 
-        # Admin authentication
-        if data['email'] == 'admin@healia.com' and data['password'] == 'healia123':
+        # Check for admin credentials first
+        ADMIN_EMAIL = 'admin@healia.com'
+        ADMIN_PASSWORD = 'healia123'
+        
+        if data['email'] == ADMIN_EMAIL and data['password'] == ADMIN_PASSWORD:
             token = jwt.encode({
                 'user_id': 'admin',
                 'is_admin': True,
                 'exp': datetime.datetime.now(timezone.utc) + datetime.timedelta(days=1)
             }, current_app.config['SECRET_KEY'], algorithm='HS256')
+            
             logger.debug("Admin signed in successfully")
             return jsonify({
                 'message': 'Signed in successfully',
@@ -155,7 +156,7 @@ def signin():
                 'user': {
                     'id': 'admin',
                     'name': 'Admin User',
-                    'email': 'admin@healia.com',
+                    'email': ADMIN_EMAIL,
                     'language': 'en',
                     'gender': 'unknown',
                     'is_admin': True
@@ -187,6 +188,7 @@ def signin():
                 'is_admin': False
             }
         }), 200
+
     except Exception as e:
         logger.error(f"Error during signin: {str(e)}")
         return jsonify({'message': f'Error: {str(e)}'}), 500
@@ -196,12 +198,14 @@ def verify():
     """Verify user token."""
     try:
         auth_header = request.headers.get('Authorization')
-        user = verify_user_from_token(auth_header)
-        if not user:
+        if not auth_header or not auth_header.startswith('Bearer '):
             logger.error("Invalid or missing token")
             return jsonify({'message': 'Invalid or missing token'}), 401
 
-        if user['id'] == 'admin':
+        token = auth_header.split(' ')[1]
+        data = jwt.decode(token, current_app.config['SECRET_KEY'], algorithms=['HS256'])
+        
+        if data['user_id'] == 'admin':
             logger.debug("Token verified for admin")
             return jsonify({
                 'user': {
@@ -214,6 +218,11 @@ def verify():
                 }
             }), 200
 
+        user = User.query.get(data['user_id'])
+        if not user:
+            logger.error("User not found")
+            return jsonify({'message': 'User not found'}), 401
+
         logger.debug(f"Token verified for user: {user.id}")
         return jsonify({
             'user': {
@@ -225,6 +234,7 @@ def verify():
                 'is_admin': False
             }
         }), 200
+
     except jwt.ExpiredSignatureError:
         logger.error("Token expired")
         return jsonify({'message': 'Token expired'}), 401
@@ -397,6 +407,7 @@ def conversation(conversation_id):
             }
             logger.debug(f"Returning response: {response}")
             return jsonify(response), 200
+
         except Exception as e:
             db.session.rollback()
             logger.error(f"Error saving conversation: {str(e)}")
@@ -547,6 +558,7 @@ def latest_conversation():
             }
             logger.debug(f"Returning response: {response}")
             return jsonify(response), 200
+
         except Exception as e:
             db.session.rollback()
             logger.error(f"Error saving conversation: {str(e)}")
@@ -738,7 +750,16 @@ def save_profile():
         logger.error(f"Error saving profile for user_id {user.id if 'user' in locals() else 'unknown'}: {str(e)}")
         return jsonify({'message': f'Error saving profile: {str(e)}'}), 500
 
+
+
+
+
+
+
+
+
 def token_required(f):
+    @wraps(f)
     def decorated(*args, **kwargs):
         auth_header = request.headers.get('Authorization')
         logger.debug(f"Verifying token with auth_header: {auth_header}")
@@ -1044,6 +1065,8 @@ def get_all_conversations(token_data):
     except Exception as e:
         logger.error(f"Error in get_all_conversations: {str(e)}")
         return jsonify({'message': f'Error: {str(e)}'}), 500
+
+
 
 @auth_bp.route('/ping', methods=['GET'])
 def ping():

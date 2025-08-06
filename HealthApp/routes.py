@@ -4,11 +4,13 @@ import datetime
 from datetime import timezone
 import uuid
 import logging
+from functools import wraps  # Add this import
 from . import db, bcrypt
 from .models import User, Conversation, MedicalProfile
 from flask_jwt_extended import jwt_required
 from .ai_engine import generate_personalized_response
 from .analysis import HealthAnalyzer
+
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -751,13 +753,6 @@ def save_profile():
         return jsonify({'message': f'Error saving profile: {str(e)}'}), 500
 
 
-
-
-
-
-
-
-
 def token_required(f):
     @wraps(f)
     def decorated(*args, **kwargs):
@@ -1065,7 +1060,6 @@ def get_all_conversations(token_data):
     except Exception as e:
         logger.error(f"Error in get_all_conversations: {str(e)}")
         return jsonify({'message': f'Error: {str(e)}'}), 500
-
 
 
 @auth_bp.route('/ping', methods=['GET'])

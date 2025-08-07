@@ -11,6 +11,7 @@ from .models import (
 )
 import json
 import re
+import requests
 from collections import defaultdict
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.cluster import KMeans
@@ -18,20 +19,23 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.preprocessing import LabelEncoder
 from textblob import TextBlob
 import os
+from dotenv import load_dotenv
 from typing import Dict, List, Any, Optional
 from statistics import mean, stdev
+
+# Load environment variables
+load_dotenv()
+GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+GROQ_ENDPOINT = os.getenv("GROQ_ENDPOINT", "https://api.groq.com/openai/v1/chat/completions")
+
+# Validate Groq API key
+if not GROQ_API_KEY:
+    logger.error("GROQ_API_KEY not found in environment variables")
+    raise ValueError("GROQ_API_KEY is required")
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
-
-# Initialize Grok client
-GROQ_API_KEY = os.getenv('GROQ_API_KEY')
-if not GROQ_API_KEY:
-    logger.error("GROQ_API_KEY not found in environment variables")
-    raise ValueError("GROQ_API_KEY is required")
-from groq import Groq
-client = Groq(api_key=GROQ_API_KEY)
 
 class HealthAnalyzer:
     def __init__(self, n_clusters: int = 5):
@@ -208,22 +212,31 @@ class HealthAnalyzer:
                     polarity = blob.sentiment.polarity
                     sentiment_scores.append(polarity)
 
-                    # Refine with Grok API
+                    # Refine with Groq API
                     try:
-                        response = client.chat.completions.create(
-                            model="mixtral-8x7b-32768",
-                            messages=[
-                                {
-                                    "role": "system",
-                                    "content": "Analyze the sentiment of the following health-related message. Return a JSON object with 'sentiment' (Very Positive, Positive, Neutral, Negative, Very Negative) and 'confidence' (0-1)."
-                                },
-                                {"role": "user", "content": message}
-                            ],
-                            max_tokens=100
+                        response = requests.post(
+                            GROQ_ENDPOINT,
+                            headers={
+                                "Authorization": f"Bearer {GROQ_API_KEY}",
+                                "Content-Type": "application/json"
+                            },
+                            json={
+                                "model": "mixtral-8x7b-32768",
+                                "messages": [
+                                    {
+                                        "role": "system",
+                                        "content": "Analyze the sentiment of the following health-related message. Return a JSON object with 'sentiment' (Very Positive, Positive, Neutral, Negative, Very Negative) and 'confidence' (0-1)."
+                                    },
+                                    {"role": "user", "content": message}
+                                ],
+                                "max_tokens": 100
+                            }
                         )
-                        grok_result = json.loads(response.choices[0].message.content)
-                        sentiment = grok_result.get('sentiment', 'Neutral')
-                    except Exception as e:
+                        response.raise_for_status()
+                        grok_result = response.json()
+                        sentiment = grok_result['choices'][0]['message']['content']
+                        sentiment = json.loads(sentiment).get('sentiment', 'Neutral')
+                    except (requests.RequestException, ValueError, KeyError) as e:
                         logger.warning(f"Grok API failed for sentiment: {str(e)}. Using TextBlob.")
                         if polarity > 0.5:
                             sentiment = 'Very Positive'
@@ -474,12 +487,20 @@ class HealthAnalyzer:
                 - region: (optional)
                 """
                 try:
-                    response = client.chat.completions.create(
-                        model="mixtral-8x7b-32768",
-                        messages=[{"role": "system", "content": prompt}],
-                        max_tokens=500
+                    response = requests.post(
+                        GROQ_ENDPOINT,
+                        headers={
+                            "Authorization": f"Bearer {GROQ_API_KEY}",
+                            "Content-Type": "application/json"
+                        },
+                        json={
+                            "model": "mixtral-8x7b-32768",
+                            "messages": [{"role": "system", "content": prompt}],
+                            "max_tokens": 500
+                        }
                     )
-                    alert = json.loads(response.choices[0].message.content)
+                    response.raise_for_status()
+                    alert = json.loads(response.json()['choices'][0]['message']['content'])
                     alert['time'] = datetime.utcnow().isoformat()
                     alerts.append(alert)
 
@@ -492,7 +513,7 @@ class HealthAnalyzer:
                         created_at=datetime.utcnow(),
                         region=alert.get('region', None)
                     ))
-                except Exception as e:
+                except (requests.RequestException, ValueError, KeyError) as e:
                     logger.warning(f"Grok API failed for alert generation: {str(e)}")
 
             db.session.commit()
@@ -707,7 +728,7 @@ class HealthAnalyzer:
 
 def generate_personalized_response(message: str, patient_info: Dict[str, Any], session_id: str, conversation_history: List[Dict[str, Any]]) -> str:
     """
-    Generate a personalized response using Grok API, enhanced with ML intent prediction.
+    Generate a personalized response using Groq API, enhanced with ML intent prediction.
     """
     try:
         # Initialize HealthAnalyzer for intent prediction
@@ -721,7 +742,7 @@ def generate_personalized_response(message: str, patient_info: Dict[str, Any], s
         intent = analyzer.predict_conversation_intent(message)
         logger.debug(f"Predicted intent: {intent}")
 
-        # Build context for the Grok API
+        # Build context for the Groq API
         context = f"""
         Patient Profile:
         - Name: {patient_info.get('name', 'N/A')}
@@ -756,16 +777,23 @@ def generate_personalized_response(message: str, patient_info: Dict[str, Any], s
         - Include a disclaimer about consulting a healthcare professional.
         """
 
-        response = client.chat.completions.create(
-            model="mixtral-8x7b-32768",
-            messages=[
-                {"role": "system", "content": prompt},
-                {"role": "user", "content": message}
-            ],
-            max_tokens=500
+        response = requests.post(
+            GROQ_ENDPOINT,
+            headers={
+                "Authorization": f"Bearer {GROQ_API_KEY}",
+                "Content-Type": "application/json"
+            },
+            json={
+                "model": "mixtral-8x7b-32768",
+                "messages": [
+                    {"role": "system", "content": prompt},
+                    {"role": "user", "content": message}
+                ],
+                "max_tokens": 500
+            }
         )
-
-        response_text = response.choices[0].message.content.strip()
+        response.raise_for_status()
+        response_text = response.json()['choices'][0]['message']['content'].strip()
         logger.info(f"Generated response for session {session_id}: {response_text[:100]}...")
         
         # Store AI performance metric
@@ -779,6 +807,6 @@ def generate_personalized_response(message: str, patient_info: Dict[str, Any], s
 
         return response_text
 
-    except Exception as e:
+    except (requests.RequestException, ValueError, KeyError) as e:
         logger.error(f"Error generating personalized response: {str(e)}")
         return "I'm sorry, I couldn't process your request at this time. Please try again later or consult a healthcare professional."

@@ -3,6 +3,7 @@ from flask import Flask, jsonify
 from flask_sqlalchemy import SQLAlchemy
 from flask_bcrypt import Bcrypt
 from flask_cors import CORS
+from flask_migrate import Migrate  # Add this import
 from dotenv import load_dotenv
 import logging
 
@@ -22,7 +23,7 @@ def create_app():
     try:
         db.init_app(app)
         bcrypt.init_app(app)
-        # Configure CORS globally for all routes
+        migrate = Migrate(app, db)  # Initialize Flask-Migrate
         CORS(app, resources={
             r"/api/*": {
                 "origins": ["https://healia.netlify.app", "http://localhost:5173"],
@@ -38,7 +39,7 @@ def create_app():
         app.register_blueprint(admin_bp, url_prefix='/api/admin')
         
         with app.app_context():
-            db.create_all()
+            db.create_all()  # Keep this for initial table creation (optional)
             logger.info("Database tables created successfully")
             
     except Exception as e:

@@ -7,22 +7,16 @@ import logging
 from functools import wraps
 from statistics import mean
 from . import db, bcrypt
+from .init import cache  # Import cache from init.py
 from .models import User, Conversation, MedicalProfile, UserSession
-from flask_jwt_extended import jwt_required
 from .ai_engine import generate_personalized_response
 from .analysis import HealthAnalyzer
-from flask_caching import Cache
 
-# Configure Flask-Caching
-cache = Cache(config={'CACHE_TYPE': 'SimpleCache'})
-
-def init_cache(app):
-    cache.init_app(app)
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-# Initialize Blueprint
+# Initialize Blueprints
 auth_bp = Blueprint('auth', __name__, url_prefix='/api/auth')
 admin_bp = Blueprint('admin', __name__, url_prefix='/api/admin')
 
@@ -560,7 +554,7 @@ def latest_conversation():
 
             response = {
                 'id': conversation.id,
-                'created_at': conversation.created_at.isoformat(),
+                'created_at': datetime.datetime.now(timezone.utc).isoformat(),
                 'updated_at': conversation.updated_at.isoformat(),
                 'messages': conversation.messages,
                 'preview': user_message['text'][:100]
@@ -825,7 +819,7 @@ def get_users(token_data):
             last_session = UserSession.query.filter_by(user_id=user.id)\
                 .order_by(UserSession.start_time.desc()).first()
             last_active = last_session.start_time if last_session else None
-            status = 'active' if last_active and (datetime.now(timezone.utc) - last_active).days < 30 else 'inactive'
+            status = 'active' if last_active and (datetime.datetime.now(timezone.utc) - last_active).days < 30 else 'inactive'
 
             user_data.append({
                 'id': user.id,
@@ -973,7 +967,7 @@ def get_user_activity(token_data):
 
         analyzer = HealthAnalyzer()
         data = analyzer.analyze_user_activity(time_range)
-        logger.info(f"Retrieved user activity for time_range: {time_range}, admin_id: {token_data.get('user_id', 'admin')}")
+        logger.info(f"Retrieved user activity for time_range: {time_range}, admin_id: {token_data.get('user_id', 'unknown')}")
         return jsonify(data), 200
     except Exception as e:
         logger.error(f"Error in get_user_activity: {str(e)}")

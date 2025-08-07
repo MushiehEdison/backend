@@ -3,25 +3,38 @@ from flask import Flask, jsonify
 from flask_sqlalchemy import SQLAlchemy
 from flask_bcrypt import Bcrypt
 from flask_cors import CORS
+from flask_caching import Cache  # Import Cache
 from dotenv import load_dotenv
 import logging
 
+# Configure logging
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
+
+# Initialize extensions
 db = SQLAlchemy()
 bcrypt = Bcrypt()
+cache = Cache()  # Initialize Cache object
 
 def create_app():
     app = Flask(__name__)
     load_dotenv()
+    
+    # Configure Flask app
     app.config['SECRET_KEY'] = os.getenv('SECRET_KEY')
     app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv('DATABASE_URL')
     app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+    app.config['CACHE_TYPE'] = 'SimpleCache'  # Configure cache type
+    app.config['CACHE_DEFAULT_TIMEOUT'] = 300  # Default cache timeout (in seconds)
+    
     logger.debug(f"Database URI: {app.config['SQLALCHEMY_DATABASE_URI']}")
     
     try:
+        # Initialize extensions
         db.init_app(app)
         bcrypt.init_app(app)
+        cache.init_app(app)  # Initialize cache with app
+        
         # Configure CORS globally for all routes
         CORS(app, resources={
             r"/api/*": {
@@ -33,7 +46,7 @@ def create_app():
         })
         
         # Register blueprints
-        from .routes import auth_bp, admin_bp
+        from .routes import auth_bp, admin_bp  # Ensure this points to your routes file
         app.register_blueprint(auth_bp, url_prefix='/api/auth')
         app.register_blueprint(admin_bp, url_prefix='/api/admin')
         

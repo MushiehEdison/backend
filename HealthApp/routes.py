@@ -11,7 +11,13 @@ from .models import User, Conversation, MedicalProfile, UserSession
 from flask_jwt_extended import jwt_required
 from .ai_engine import generate_personalized_response
 from .analysis import HealthAnalyzer
+from flask_caching import Cache
 
+# Configure Flask-Caching
+cache = Cache(config={'CACHE_TYPE': 'SimpleCache'})
+
+def init_cache(app):
+    cache.init_app(app)
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -785,6 +791,7 @@ def token_required(f):
 
 @admin_bp.route('/users', methods=['GET'])
 @token_required
+@cache.cached(timeout=300, query_string=True)
 def get_users(token_data):
     """
     Fetch all users for the admin dashboard with pagination.
@@ -797,7 +804,6 @@ def get_users(token_data):
         page = int(request.args.get('page', 1))
         per_page = int(request.args.get('per_page', 10))
 
-        # Query users with their session data, sorted by id
         users_query = User.query.order_by(User.id.desc())
         paginated_users = users_query.paginate(page=page, per_page=per_page, error_out=False)
         users = paginated_users.items
@@ -806,7 +812,6 @@ def get_users(token_data):
 
         user_data = []
         for user in users:
-            # Calculate session metrics
             sessions = UserSession.query.filter_by(user_id=user.id).all()
             total_sessions = len(sessions)
             avg_session_time = 0
@@ -817,7 +822,6 @@ def get_users(token_data):
                 ]
                 avg_session_time = round(mean(session_durations), 1) if session_durations else 0
 
-            # Use last session's start_time or None if no sessions exist
             last_session = UserSession.query.filter_by(user_id=user.id)\
                 .order_by(UserSession.start_time.desc()).first()
             last_active = last_session.start_time if last_session else None
@@ -846,6 +850,7 @@ def get_users(token_data):
 
 @admin_bp.route('/analytics/symptom_trends', methods=['GET'])
 @token_required
+@cache.cached(timeout=300, query_string=True)
 def get_symptom_trends(token_data):
     """
     Fetch symptom trends data for the admin dashboard across all users.
@@ -870,6 +875,7 @@ def get_symptom_trends(token_data):
 
 @admin_bp.route('/analytics/sentiment', methods=['GET'])
 @token_required
+@cache.cached(timeout=300, query_string=True)
 def get_sentiment_analysis(token_data):
     """
     Fetch sentiment analysis data for the admin dashboard across specified conversations.
@@ -900,6 +906,7 @@ def get_sentiment_analysis(token_data):
 
 @admin_bp.route('/analytics/diagnostic_patterns', methods=['GET'])
 @token_required
+@cache.cached(timeout=300, query_string=True)
 def get_diagnostic_patterns(token_data):
     """
     Fetch diagnostic patterns data for the admin dashboard across all users.
@@ -924,6 +931,7 @@ def get_diagnostic_patterns(token_data):
 
 @admin_bp.route('/analytics/communication_metrics', methods=['GET'])
 @token_required
+@cache.cached(timeout=300, query_string=True)
 def get_communication_metrics(token_data):
     """
     Fetch communication metrics data for the admin dashboard across all users.
@@ -948,6 +956,7 @@ def get_communication_metrics(token_data):
 
 @admin_bp.route('/analytics/user_activity', methods=['GET'])
 @token_required
+@cache.cached(timeout=300, query_string=True)
 def get_user_activity(token_data):
     """
     Fetch user activity data for the admin dashboard across all users.
@@ -972,6 +981,7 @@ def get_user_activity(token_data):
 
 @admin_bp.route('/analytics/health_alerts', methods=['GET'])
 @token_required
+@cache.cached(timeout=300)
 def get_health_alerts(token_data):
     """
     Fetch health alerts data for the admin dashboard across all users.
@@ -990,6 +1000,7 @@ def get_health_alerts(token_data):
 
 @admin_bp.route('/analytics/treatment_preferences', methods=['GET'])
 @token_required
+@cache.cached(timeout=300, query_string=True)
 def get_treatment_preferences(token_data):
     """
     Fetch treatment preferences data for the admin dashboard across all users.
@@ -1014,6 +1025,7 @@ def get_treatment_preferences(token_data):
 
 @admin_bp.route('/analytics/health_literacy', methods=['GET'])
 @token_required
+@cache.cached(timeout=300, query_string=True)
 def get_health_literacy(token_data):
     """
     Fetch health literacy data for the admin dashboard across all users.
@@ -1038,6 +1050,7 @@ def get_health_literacy(token_data):
 
 @admin_bp.route('/analytics/workflow_metrics', methods=['GET'])
 @token_required
+@cache.cached(timeout=300, query_string=True)
 def get_workflow_metrics(token_data):
     """
     Fetch workflow metrics data for the admin dashboard across all users.
@@ -1062,6 +1075,7 @@ def get_workflow_metrics(token_data):
 
 @admin_bp.route('/analytics/ai_performance', methods=['GET'])
 @token_required
+@cache.cached(timeout=300, query_string=True)
 def get_ai_performance(token_data):
     """
     Fetch AI performance metrics data for the admin dashboard across all users.
@@ -1086,6 +1100,7 @@ def get_ai_performance(token_data):
 
 @admin_bp.route('/analytics/conversations', methods=['GET'])
 @token_required
+@cache.cached(timeout=300, query_string=True)
 def get_all_conversations(token_data):
     """
     Fetch all conversations across all users for the admin dashboard (for sentiment analysis).

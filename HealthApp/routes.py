@@ -796,8 +796,8 @@ def get_users(token_data):
         page = int(request.args.get('page', 1))
         per_page = int(request.args.get('per_page', 10))
 
-        # Query users with their session data
-        users_query = User.query.order_by(User.created_at.desc())
+        # Query users with their session data, sorted by id instead of created_at
+        users_query = User.query.order_by(User.id.desc())
         paginated_users = users_query.paginate(page=page, per_page=per_page, error_out=False)
         users = paginated_users.items
         total = paginated_users.total
@@ -826,7 +826,7 @@ def get_users(token_data):
                 'id': user.id,
                 'name': user.name,
                 'email': user.email,
-                'joined_at': user.created_at.isoformat(),
+                'joined_at': last_active.isoformat() if last_active else None,  # Use last_active as fallback
                 'status': status,
                 'last_active': last_active.isoformat() if last_active else None,
                 'total_sessions': total_sessions,

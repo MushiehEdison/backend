@@ -5,12 +5,12 @@ from datetime import timezone
 import uuid
 import logging
 from functools import wraps
+from statistics import mean
 from . import db, bcrypt
 from .models import User, Conversation, MedicalProfile, UserSession
 from flask_jwt_extended import jwt_required
 from .ai_engine import generate_personalized_response
 from .analysis import HealthAnalyzer
-from statistics import mean
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -797,34 +797,16 @@ def get_users(token_data):
         page = int(request.args.get('page', 1))
         per_page = int(request.args.get('per_page', 10))
 
-        # Query users with their session data
-        users_query = User.query.order_by(User.created_at.desc())
+        # Query users with their session data, sorted by id instead of created_at
+        users_query = User.query.order_by(User.id.desc())
         paginated_users = users_query.paginate(page=page, per_page=per_page, error_out=False)
         users = paginated_users.items
         total = paginated_users.total
         pages = paginated_users.pages
 
-        # Calculate new users today
-        today = datetime.datetime.now(timezone.utc).date()
-        new_users_today = User.query.filter(
-            db.func.date(User.created_at) == today
-        ).count()
-
-        # Calculate active sessions (sessions without end_time or ended within last hour)
-        active_sessions = UserSession.query.filter(
-            (UserSession.end_time.is_(None)) |
-            (UserSession.end_time >= datetime.datetime.now(timezone.utc) - timedelta(hours=1))
-        ).count()
-
-        # Calculate user retention (users active in last 30 days / total users)
-        active_users_last_30d = UserSession.query.filter(
-            UserSession.last_active >= datetime.datetime.now(timezone.utc) - timedelta(days=30)
-        ).distinct(UserSession.user_id).count()
-        total_users = User.query.count()
-        retention_rate = round((active_users_last_30d / total_users * 100), 1) if total_users > 0 else 0
-
         user_data = []
         for user in users:
+            # Calculate session metrics
             sessions = UserSession.query.filter_by(user_id=user.id).all()
             total_sessions = len(sessions)
             avg_session_time = 0
@@ -835,16 +817,17 @@ def get_users(token_data):
                 ]
                 avg_session_time = round(mean(session_durations), 1) if session_durations else 0
 
+            # Use created_at from User model and determine last active and status
             last_session = UserSession.query.filter_by(user_id=user.id)\
                 .order_by(UserSession.start_time.desc()).first()
-            last_active = last_session.start_time if last_session else None
+            last_active = last_session.start_time if last_session else user.created_at
             status = 'active' if last_active and (datetime.datetime.now(timezone.utc) - last_active).days < 30 else 'inactive'
 
             user_data.append({
                 'id': user.id,
                 'name': user.name,
                 'email': user.email,
-                'joined_at': user.created_at.isoformat() if user.created_at else None,  # Fixed to use created_at
+                'joined_at': user.created_at.isoformat(),  # Use created_at from User model
                 'status': status,
                 'last_active': last_active.isoformat() if last_active else None,
                 'total_sessions': total_sessions,
@@ -856,10 +839,7 @@ def get_users(token_data):
             'users': user_data,
             'total': total,
             'pages': pages,
-            'current_page': page,
-            'new_users_today': new_users_today,
-            'active_sessions': active_sessions,
-            'retention_rate': retention_rate
+            'current_page': page
         }), 200
     except Exception as e:
         logger.error(f"Error in get_users: {str(e)}")

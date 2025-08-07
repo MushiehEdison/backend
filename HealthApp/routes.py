@@ -817,10 +817,10 @@ def get_users(token_data):
                 ]
                 avg_session_time = round(mean(session_durations), 1) if session_durations else 0
 
-            # Use created_at from User model to determine last active and status
+            # Use last session's start_time or None if no sessions exist
             last_session = UserSession.query.filter_by(user_id=user.id)\
                 .order_by(UserSession.start_time.desc()).first()
-            last_active = last_session.start_time if last_session else user.created_at
+            last_active = last_session.start_time if last_session else None
             status = 'active' if last_active and (datetime.now(timezone.utc) - last_active).days < 30 else 'inactive'
 
             user_data.append({

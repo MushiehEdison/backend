@@ -9,6 +9,7 @@ from datetime import datetime
 from collections import defaultdict
 import difflib
 import uuid
+import numpy as np  # Added for MF model computations
 
 # Setup logging
 logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -149,10 +150,86 @@ def detect_language(text):
     
     return "fr" if french_ratio >= 0.3 else "en"
 
-# Load clinical dataset
+# --- Modified: Load clinical dataset and train MF model ---
 DATASET_PATH = os.path.join(os.path.dirname(__file__), "clinical_summaries.csv")
 dataset_df = pd.DataFrame()
-dataset_index = {}
+symptom_embeddings = None
+condition_embeddings = None
+record_embeddings = None
+symptom_to_idx = {}
+condition_to_idx = {}
+
+def train_mf_model(dataset_df, n_components=10):
+    """Train a Matrix Factorization model using SVD on symptom-condition interactions"""
+    global symptom_embeddings, condition_embeddings, record_embeddings, symptom_to_idx, condition_to_idx
+    
+    if dataset_df.empty:
+        logger.warning("Cannot train MF model: Dataset is empty")
+        return
+    
+    # Extract all unique symptoms and conditions from dataset
+    all_symptoms = set()
+    all_conditions = set()
+    for _, row in dataset_df.iterrows():
+        summary = str(row.get('summary_text', '')).lower()
+        diagnosis = str(row.get('diagnosis', '')).lower()
+        text = f"{summary} {diagnosis}"
+        _, symptoms, conditions = extract_entities(text)
+        all_symptoms.update(symptoms)
+        all_conditions.update(conditions)
+    
+    # Create mappings
+    symptom_to_idx = {s: i for i, s in enumerate(sorted(all_symptoms))}
+    condition_to_idx = {c: i for i, c in enumerate(sorted(all_conditions))}
+    
+    # Build symptom-condition interaction matrix
+    n_records = len(dataset_df)
+    n_symptoms = len(symptom_to_idx)
+    n_conditions = len(condition_to_idx)
+    
+    # Create record-symptom and record-condition matrices
+    record_symptom_matrix = np.zeros((n_records, n_symptoms))
+    record_condition_matrix = np.zeros((n_records, n_conditions))
+    
+    for idx, row in dataset_df.iterrows():
+        summary = str(row.get('summary_text', '')).lower()
+        diagnosis = str(row.get('diagnosis', '')).lower()
+        text = f"{summary} {diagnosis}"
+        _, symptoms, conditions = extract_entities(text)
+        
+        for symptom in symptoms:
+            if symptom in symptom_to_idx:
+                record_symptom_matrix[idx, symptom_to_idx[symptom]] = 1
+        for condition in conditions:
+            if condition in condition_to_idx:
+                record_condition_matrix[idx, condition_to_idx[condition]] = 1
+    
+    # Combine matrices for MF
+    interaction_matrix = np.hstack([record_symptom_matrix, record_condition_matrix])
+    
+    # Apply SVD
+    try:
+        U, sigma, Vt = np.linalg.svd(interaction_matrix, full_matrices=False)
+        # Keep top n_components
+        U = U[:, :n_components]
+        sigma = np.diag(sigma[:n_components])
+        Vt = Vt[:n_components, :]
+        
+        # Split embeddings
+        record_embeddings = U @ sigma  # Record embeddings
+        feature_embeddings = Vt.T  # Symptom + condition embeddings
+        symptom_embeddings = feature_embeddings[:n_symptoms, :]
+        condition_embeddings = feature_embeddings[n_symptoms:, :]
+        
+        logger.info(f"Trained MF model with {n_components} components. "
+                   f"Record embeddings shape: {record_embeddings.shape}, "
+                   f"Symptom embeddings shape: {symptom_embeddings.shape}, "
+                   f"Condition embeddings shape: {condition_embeddings.shape}")
+    except Exception as e:
+        logger.error(f"Failed to train MF model: {str(e)}")
+        symptom_embeddings = None
+        condition_embeddings = None
+        record_embeddings = None
 
 try:
     if not os.path.exists(DATASET_PATH):
@@ -177,23 +254,11 @@ try:
                 if dataset_df.empty:
                     logger.warning("Dataset is empty after dropping NA values")
                 else:
-                    for idx, row in dataset_df.iterrows():
-                        diagnosis = str(row.get('diagnosis', '')).lower().strip()
-                        summary = str(row.get('summary_text', '')).lower().strip()
-                        words = re.findall(r'\b\w+\b', f"{diagnosis} {summary}")
-                        if diagnosis:
-                            if diagnosis not in dataset_index:
-                                dataset_index[diagnosis] = []
-                            dataset_index[diagnosis].append(idx)
-                        for word in words:
-                            if len(word) > 3:
-                                if word not in dataset_index:
-                                    dataset_index[word] = []
-                                dataset_index[word].append(idx)
-                    logger.info(f"Loaded dataset with {len(dataset_df)} records and indexed {len(dataset_index)} terms")
+                    logger.info(f"Loaded dataset with {len(dataset_df)} records")
+                    train_mf_model(dataset_df)  # Train MF model
 except Exception as e:
     logger.error(f"Failed to load dataset at {DATASET_PATH}: {str(e)}")
-    dataset_df = pd.DataFrame()  # Ensure dataset_df is empty on failure
+    dataset_df = pd.DataFrame()
 
 def extract_entities(text):
     """Extract symptoms, conditions, and topics from text"""
@@ -233,11 +298,6 @@ def detect_emotional_state(text):
 
 def should_use_clinical_data(symptoms, conditions, user_input, conversation_depth):
     """Determine if clinical data should be included in response"""
-    # Only use clinical data if:
-    # 1. User has mentioned specific symptoms or conditions
-    # 2. User is asking for medical information (not just chatting)
-    # 3. Not in early conversation stages unless specifically medical
-    
     medical_keywords = [
         'what is', 'tell me about', 'explain', 'symptoms of', 'treatment for',
         'causes of', 'how to treat', 'diagnosis', 'condition', 'disease',
@@ -247,7 +307,6 @@ def should_use_clinical_data(symptoms, conditions, user_input, conversation_dept
     
     user_input_lower = user_input.lower()
     
-    # Don't use clinical data for:
     if any(phrase in user_input_lower for phrase in [
         'thank', 'thanks', 'merci', 'hello', 'hi', 'bonjour', 'how are you',
         'comment allez-vous', 'goodbye', 'au revoir', 'feeling better',
@@ -255,35 +314,57 @@ def should_use_clinical_data(symptoms, conditions, user_input, conversation_dept
     ]):
         return False
     
-    # Use clinical data if:
     has_medical_keywords = any(keyword in user_input_lower for keyword in medical_keywords)
     has_specific_symptoms = len(symptoms) > 0 and any(len(s) > 3 for s in symptoms)
     has_conditions = len(conditions) > 0
     
     return has_medical_keywords or has_specific_symptoms or has_conditions
 
+# --- Modified: Query dataset using MF embeddings ---
 def query_dataset(symptoms, conditions, max_records=3):
-    """Query dataset for relevant clinical records"""
-    if dataset_df.empty:
-        logger.warning("Cannot query dataset: DataFrame is empty")
+    """Query dataset using MF embeddings for relevant clinical records"""
+    if dataset_df.empty or symptom_embeddings is None or condition_embeddings is None:
+        logger.warning("Cannot query dataset: DataFrame is empty or MF model not trained")
         return []
 
-    relevant_indices = set()
-    search_terms = list(symptoms) + list(conditions)
-
-    for term in search_terms:
-        term_clean = term.lower().strip()
-        if term_clean in dataset_index:
-            relevant_indices.update(dataset_index[term_clean][:3])
-
-    if not relevant_indices:
-        for term in search_terms:
-            for indexed_term in dataset_index.keys():
-                if difflib.SequenceMatcher(None, term.lower(), indexed_term).ratio() > 0.7:
-                    relevant_indices.update(dataset_index[indexed_term][:2])
-
+    # Create query vector from symptoms and conditions
+    n_symptoms = len(symptom_to_idx)
+    n_conditions = len(condition_to_idx)
+    query_vector = np.zeros(n_symptoms + n_conditions)
+    
+    for symptom in symptoms:
+        if symptom in symptom_to_idx:
+            query_vector[symptom_to_idx[symptom]] = 1
+    for condition in conditions:
+        if condition in condition_to_idx:
+            query_vector[condition_to_idx[condition] + n_symptoms] = 1
+    
+    # Compute query embedding
+    try:
+        feature_embeddings = np.vstack([symptom_embeddings, condition_embeddings])
+        query_embedding = query_vector @ feature_embeddings
+    except Exception as e:
+        logger.error(f"Error computing query embedding: {str(e)}")
+        return []
+    
+    # Compute cosine similarity with record embeddings
+    similarities = []
+    for idx in range(len(dataset_df)):
+        record_embedding = record_embeddings[idx]
+        norm_query = np.linalg.norm(query_embedding)
+        norm_record = np.linalg.norm(record_embedding)
+        if norm_query == 0 or norm_record == 0:
+            similarity = 0
+        else:
+            similarity = np.dot(query_embedding, record_embedding) / (norm_query * norm_record)
+        similarities.append((idx, similarity))
+    
+    # Sort by similarity and select top records
+    similarities.sort(key=lambda x: x[1], reverse=True)
+    relevant_indices = [idx for idx, sim in similarities[:max_records] if sim > 0]
+    
     records = []
-    for idx in list(relevant_indices)[:max_records]:
+    for idx in relevant_indices:
         row = dataset_df.iloc[idx]
         records.append({
             'age': row.get('patient_age', 'N/A'),
@@ -296,7 +377,8 @@ def query_dataset(symptoms, conditions, max_records=3):
             },
             'summary': str(row.get('summary_text', ''))[:200] + '...' if row.get('summary_text') else 'N/A'
         })
-    logger.debug(f"Queried dataset, found {len(records)} relevant records")
+    
+    logger.debug(f"Queried dataset using MF, found {len(records)} relevant records")
     return records
 
 def call_groq_api(messages, model="llama3-70b-8192", max_tokens=500, temperature=0.7):
@@ -360,23 +442,17 @@ def format_response_for_readability(response_text):
     if not response_text:
         return response_text
     
-    # Remove asterisks used for emphasis (fix the **bold** issue)
     response_text = re.sub(r'\*{1,2}([^*]+)\*{1,2}', r'\1', response_text)
-    
-    # Split into sentences
     sentences = re.split(r'(?<=[.!?])\s+', response_text.strip())
     
     if len(sentences) <= 2:
         return response_text
     
-    # Group sentences into paragraphs (2-3 sentences per paragraph)
     paragraphs = []
     current_paragraph = []
     
     for i, sentence in enumerate(sentences):
         current_paragraph.append(sentence)
-        
-        # Create paragraph break after 2-3 sentences or at logical breaks
         if (len(current_paragraph) >= 2 and 
             (i == len(sentences) - 1 or 
              any(keyword in sentence.lower() for keyword in [
@@ -395,7 +471,6 @@ def format_response_for_readability(response_text):
 
 def get_appropriate_emoji(emotional_state, conversation_depth):
     """Get appropriate emoji based on context (limited to face emojis only)"""
-    # Only use face emojis, and not too frequently
     emoji_map = {
         'VERY_POSITIVE': '😊',
         'POSITIVE': '😊', 
@@ -405,7 +480,6 @@ def get_appropriate_emoji(emotional_state, conversation_depth):
         'NEUTRAL': ''
     }
     
-    # Reduce emoji frequency after initial messages
     if conversation_depth > 3 and conversation_depth % 3 != 0:
         return ''
     
@@ -413,8 +487,6 @@ def get_appropriate_emoji(emotional_state, conversation_depth):
 
 def build_system_prompt(patient_info, context, emotional_state, language):
     """Build a dynamic system prompt for AI with cultural and contextual optimizations"""
-    
-    # Use username if available, otherwise first name, and avoid repetitive use
     name = patient_info.get('name', 'Patient')
     username = patient_info.get('username', '')
     age = patient_info.get('age', 'N/A')
@@ -427,7 +499,6 @@ def build_system_prompt(patient_info, context, emotional_state, language):
     topics = context['topics_covered']
     emotional_trend = [e['sentiment'] for e in context['emotional_progression']]
 
-    # Determine name usage strategy
     if username:
         name_instruction = f"Use the username '{username}' occasionally, not in every message."
     elif conversation_depth > 2:
@@ -516,32 +587,22 @@ def generate_personalized_response(user_input, patient_info, session_id="default
 
     memory = conversation_memories[session_id]
     
-    # Detect language from user input, fallback to login preference
     detected_lang = detect_language(user_input)
     memory.user_preferences["language"] = detected_lang
     logger.debug(f"Detected language: {detected_lang}, user input: {user_input}")
 
-    # Initialize memory with database history if provided
     if history:
         memory.load_history(history)
 
-    # Extract entities and emotional state
     topics, symptoms, conditions = extract_entities(user_input)
     emotional_state = detect_emotional_state(user_input)
     memory.add_message(user_input, is_user=True, sentiment=emotional_state, topics=topics)
     memory.mentioned_symptoms.update(symptoms)
     memory.mentioned_conditions.update(conditions)
 
-    # Get conversation context
     context = memory.get_context_summary()
 
-    # Determine if patient info should be used based on context
     def should_use_patient_info():
-        # Use patient info if:
-        # 1. Medical symptoms or conditions are mentioned
-        # 2. User asks about treatments or medical advice
-        # 3. Emotional state suggests need for personalized reassurance
-        # 4. Specific patient info (e.g., chronic conditions, allergies) is relevant
         medical_query = any(keyword in user_input.lower() for keyword in [
             'treat', 'treatment', 'help', 'manage', 'deal with', 'medicine', 'medication',
             'traiter', 'traitement', 'gérer', 'médicament', 'soigner', 'guérir'
@@ -557,19 +618,16 @@ def generate_personalized_response(user_input, patient_info, session_id="default
         return (len(symptoms) > 0 or len(conditions) > 0 or medical_query or
                 emotional_state in ['CONCERNED', 'NEGATIVE', 'VERY_NEGATIVE'] and has_relevant_info)
 
-    # Only query dataset if it should be used based on context
     dataset_records = []
     if should_use_clinical_data(symptoms, conditions, user_input, memory.conversation_depth):
         dataset_records = query_dataset(memory.mentioned_symptoms, memory.mentioned_conditions)
 
-    # Build prompt with selective patient info
     system_prompt = build_system_prompt(patient_info, context, emotional_state, memory.user_preferences["language"])
     conversation_history = "\n".join([
         f"{'Utilisateur' if msg['is_user'] else 'Assistant' if memory.user_preferences['language'] == 'fr' else 'User' if msg['is_user'] else 'Assistant'}: {msg['text']}" 
         for msg in context['recent_messages'][-5:]
     ])
     
-    # Include patient info only if relevant
     patient_context = ""
     if should_use_patient_info():
         relevant_info = []
@@ -591,7 +649,6 @@ def generate_personalized_response(user_input, patient_info, session_id="default
         if relevant_info:
             patient_context = f"{'Informations pertinentes sur le patient' if memory.user_preferences['language'] == 'fr' else 'Relevant Patient Information'}: " + "; ".join(relevant_info)
 
-    # Combine dataset and patient context if both are relevant
     additional_context = []
     if dataset_context := "\n".join([
         f"{'Cas' if memory.user_preferences['language'] == 'fr' else 'Case'} {i}: {r['diagnosis']} - {r['summary']}" 
@@ -605,21 +662,17 @@ def generate_personalized_response(user_input, patient_info, session_id="default
     if additional_context:
         full_prompt += f"\n\n{'\n'.join(additional_context)}"
 
-    # Call Groq API with optimized parameters
     messages = [
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": full_prompt}
     ]
     
-    # Log the full request for debugging
     logger.debug(f"Full API request - Messages: {json.dumps(messages, indent=2)}")
     
     response = call_groq_api(messages, max_tokens=500, temperature=0.7)
 
     if response and not response.startswith("Error:"):
-        # Format response into shorter paragraphs for better readability
         formatted_response = format_response_for_readability(response)
-        # Split into shorter paragraphs (1-2 sentences each)
         sentences = re.split(r'(?<=[.!?])\s+', formatted_response.strip())
         paragraphs = []
         current_paragraph = []
@@ -635,15 +688,13 @@ def generate_personalized_response(user_input, patient_info, session_id="default
             paragraphs.append(' '.join(current_paragraph))
         formatted_response = '\n\n'.join(paragraphs)
 
-        # Add appropriate emoji if needed, slightly more frequent but context-aware
         emoji = get_appropriate_emoji(emotional_state, memory.conversation_depth)
         if emoji and not any(e in formatted_response for e in ['😊', '😔', '🤗']) and (
             emotional_state in ['POSITIVE', 'VERY_POSITIVE', 'CONCERNED', 'NEGATIVE', 'VERY_NEGATIVE'] or
             any(t in topics for t in ['symptoms', 'medical_conditions', 'medication'])
         ):
             formatted_response += f" {emoji}"
-        
-        # Add follow-up question if patient info was used for medical context
+
         if patient_context and any(t in topics for t in ['symptoms', 'medical_conditions', 'medication']):
             follow_up = (
                 "Pouvez-vous me dire si vos symptômes ont changé récemment ou si vous prenez des médicaments spécifiques pour cela ?"
@@ -656,49 +707,36 @@ def generate_personalized_response(user_input, patient_info, session_id="default
         logger.info(f"Generated AI response: {formatted_response[:100]}...")
         return formatted_response
 
-    # Enhanced fallback response based on detected language and symptoms
-    lang = memory.user_preferences["language"]
-    
-    # Log the error for debugging
     logger.error(f"API call failed. Response was: {response}")
     
-    # Create a more helpful fallback response
     if symptoms:
-        symptoms_list = list(symptoms)[:3]  # Limit to 3 symptoms
-        if lang == "fr":
+        symptoms_list = list(symptoms)[:3]
+        if memory.user_preferences["language"] == "fr":
             fallback = f"Je comprends que vous ressentez {', '.join(symptoms_list)}. "
             if emotional_state in ['CONCERNED', 'NEGATIVE', 'VERY_NEGATIVE']:
                 fallback += "Je sais que cela peut être inquiétant. "
-            
-            # Add context-specific advice based on symptoms
             if 'pain' in symptoms or 'douleur' in symptoms:
                 fallback += "Pour la douleur, vous pouvez essayer de vous reposer et appliquer de la chaleur ou du froid selon ce qui vous soulage. "
             if 'stress' in user_input.lower():
                 fallback += "Le stress peut effectivement aggraver certains symptômes physiques. "
-            
             fallback += "Il serait sage de consulter un professionnel de santé si les symptômes persistent ou s'aggravent. Pouvez-vous me dire depuis quand vous ressentez cela ? 😊"
         else:
             fallback = f"I understand you're experiencing {', '.join(symptoms_list)}. "
             if emotional_state in ['CONCERNED', 'NEGATIVE', 'VERY_NEGATIVE']:
                 fallback += "I know this can be concerning. "
-            
-            # Add context-specific advice based on symptoms
             if 'pain' in symptoms:
                 fallback += "For pain management, you might try rest and applying heat or cold depending on what feels better. "
             if 'stress' in user_input.lower():
                 fallback += "Stress can indeed worsen physical symptoms. "
-            
             fallback += "It would be wise to see a healthcare professional if symptoms persist or worsen. Can you tell me how long you've been experiencing this? 😊"
     else:
-        # Generic fallback for non-symptom related issues
-        if lang == "fr":
+        if memory.user_preferences["language"] == "fr":
             fallback = "Je rencontre actuellement un problème technique, mais je suis là pour vous aider. Pouvez-vous me parler un peu plus de ce qui vous préoccupe ? 😊"
         else:
             fallback = "I'm experiencing a technical issue right now, but I'm here to help. Could you tell me a bit more about what's concerning you? 😊"
 
-    # Use patient info in fallback if relevant and available
     if should_use_patient_info() and patient_info.get('chronic_conditions') != 'None':
-        if lang == "fr":
+        if memory.user_preferences["language"] == "fr":
             fallback += f" Je note que vous avez des antécédents de {patient_info['chronic_conditions']}."
         else:
             fallback += f" I note that you have a history of {patient_info['chronic_conditions']}."
@@ -707,10 +745,9 @@ def generate_personalized_response(user_input, patient_info, session_id="default
     logger.warning(f"Enhanced fallback response generated: {fallback}")
     return fallback
 
-
 def test_conversation_flow():
     """Test the AI-driven conversation system with optimizations"""
-    print("🧪 Testing Optimized AI Medical Assistant\n")
+    print("🧪 Testing Optimized AI Medical Assistant with MF Model\n")
     test_patients = [
         {
             'name': 'Marie Ngozi',
@@ -734,8 +771,8 @@ def test_conversation_flow():
         ("It's worse in the evenings and I feel nauseous", "C'est pire le soir et je me sens nauséeux"),
         ("I'm scheduled for a C-section next week and I'm worried", "Je dois avoir une césarienne la semaine prochaine et je suis inquiet"),
         ("Thank you for your help!", "Merci pour votre aide !"),
-        ("What is malaria?", "Qu'est-ce que le paludisme ?"),  # Should use clinical data
-        ("Hello, how are you?", "Bonjour, comment allez-vous ?")  # Should NOT use clinical data
+        ("What is malaria?", "Qu'est-ce que le paludisme ?"),
+        ("Hello, how are you?", "Bonjour, comment allez-vous ?")
     ]
     session_id = "test_session"
 
@@ -743,27 +780,23 @@ def test_conversation_flow():
         lang = patient['language']
         print(f"\n📱 Conversation Simulation for {patient['username']} (Login preference: {'English' if lang == 'en' else 'French'}):")
         print("=" * 70)
-        conversation_memories[session_id] = ConversationMemory()  # Reset memory
+        conversation_memories[session_id] = ConversationMemory()
         
-        # Test mixed inputs to verify language detection and clinical data usage
         test_inputs = [
-            test_conversations[0][1 if patient['language'] == 'en' else 0],  # Symptoms - should detect properly
-            test_conversations[1][0 if patient['language'] == 'fr' else 1],  # More symptoms
-            test_conversations[4][1 if patient['language'] == 'en' else 0],  # Medical question - should use clinical data
-            test_conversations[5][0 if patient['language'] == 'fr' else 1],  # Greeting - should NOT use clinical data
-            test_conversations[2][1 if patient['language'] == 'en' else 0],  # C-section concern
-            test_conversations[3][0 if patient['language'] == 'fr' else 1]   # Thank you
+            test_conversations[0][1 if patient['language'] == 'en' else 0],
+            test_conversations[1][0 if patient['language'] == 'fr' else 1],
+            test_conversations[4][1 if patient['language'] == 'en' else 0],
+            test_conversations[5][0 if patient['language'] == 'fr' else 1],
+            test_conversations[2][1 if patient['language'] == 'en' else 0],
+            test_conversations[3][0 if patient['language'] == 'fr' else 1]
         ]
         
         for i, message in enumerate(test_inputs, 1):
             print(f"\n👤 {'Utilisateur' if detect_language(message) == 'fr' else 'User'} (Message {i}): {message}")
-            
-            # Time the response for performance testing
             start_time = datetime.now()
             response = generate_personalized_response(message, patient, session_id, [])
             end_time = datetime.now()
             response_time = (end_time - start_time).total_seconds()
-            
             print(f"🤖 Dr. Healia: {response}")
             print(f"⏱️  Response time: {response_time:.2f} seconds")
             print("-" * 50)
@@ -778,7 +811,6 @@ def test_conversation_flow():
         print(f"Topics: {memory.topics_discussed}")
         print("=" * 70)
 
-# Additional debugging function
 def debug_api_connection():
     """Test the API connection with a simple request"""
     print("🔍 Testing API Connection...")
@@ -790,7 +822,6 @@ def debug_api_connection():
     print(f"✅ API Key found: {GROQ_API_KEY[:10]}...")
     print(f"📡 Endpoint: {GROQ_ENDPOINT}")
     
-    # Test with a simple message
     test_messages = [
         {"role": "system", "content": "You are a helpful assistant."},
         {"role": "user", "content": "Say hello"}
@@ -806,7 +837,6 @@ def debug_api_connection():
         return True
 
 if __name__ == "__main__":
-    # First test API connection
     if debug_api_connection():
         test_conversation_flow()
     else:

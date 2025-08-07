@@ -7,46 +7,36 @@ import logging
 from functools import wraps
 from statistics import mean
 from . import db, bcrypt
-from .init import cache  # Import cache from init.py
+from .init import cache
 from .models import User, Conversation, MedicalProfile, UserSession
 from .ai_engine import generate_personalized_response
 from .analysis import HealthAnalyzer
 
-# Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-# Initialize Blueprints
 auth_bp = Blueprint('auth', __name__, url_prefix='/api/auth')
 admin_bp = Blueprint('admin', __name__, url_prefix='/api/admin')
 
-# Root route for health checks
 @auth_bp.route('/', methods=['GET', 'HEAD'])
 def health_check():
-    """Handle Render health checks."""
     logger.info("Received health check request")
     return jsonify({'status': 'alive'}), 200
 
-# Catch-all OPTIONS route for all /api/auth/* endpoints
 @auth_bp.route('/<path:path>', methods=['OPTIONS'])
 @auth_bp.route('/', methods=['OPTIONS'])
 def handle_options(path=None):
-    """Handle preflight OPTIONS requests for all auth routes."""
     logger.debug(f"Handling OPTIONS request for path: {path or '/'}")
     return jsonify({}), 200
 
 def verify_user_from_token(auth_header):
-    """Verify user from JWT token in Authorization header."""
     logger.debug(f"Verifying token with auth_header: {auth_header}")
-    if not auth_header:
-        logger.error("Authorization header is missing")
-        return None
-    if not auth_header.startswith('Bearer '):
-        logger.error(f"Invalid Authorization header format: {auth_header}")
+    if not auth_header or not auth_header.startswith('Bearer '):
+        logger.error("Authorization header is missing or invalid")
         return None
     token = auth_header.split(' ')[1].strip()
     if not token:
-        logger.error("Token is empty after splitting Authorization header")
+        logger.error("Token is empty")
         return None
     try:
         decoded = jwt.decode(token, current_app.config['SECRET_KEY'], algorithms=['HS256'], options={'verify_exp': True})
@@ -67,14 +57,12 @@ def verify_user_from_token(auth_header):
         return None
 
 def get_safe_medical_profile_attr(user, attr_name, default_value):
-    """Safely get an attribute from user's medical profile."""
     if user.medical_profile is None:
         return default_value
     return getattr(user.medical_profile, attr_name, default_value)
 
 @auth_bp.route('/signup', methods=['POST'])
 def signup():
-    """Handle user signup."""
     try:
         data = request.get_json()
         logger.debug(f"Signup data received: {data}")
@@ -125,7 +113,6 @@ def signup():
                 'gender': new_user.gender
             }
         }), 201
-
     except Exception as e:
         db.session.rollback()
         logger.error(f"Error during signup: {str(e)}")
@@ -133,7 +120,6 @@ def signup():
 
 @auth_bp.route('/signin', methods=['POST'])
 def signin():
-    """Handle user signin."""
     try:
         data = request.get_json()
         logger.debug(f"Signin data received: {data}")
@@ -141,7 +127,6 @@ def signin():
             logger.error("Missing email or password")
             return jsonify({'message': 'Missing email or password'}), 400
 
-        # Check for admin credentials first
         ADMIN_EMAIL = 'admin@healia.com'
         ADMIN_PASSWORD = 'healia123'
         
@@ -151,7 +136,6 @@ def signin():
                 'is_admin': True,
                 'exp': datetime.datetime.now(timezone.utc) + datetime.timedelta(days=1)
             }, current_app.config['SECRET_KEY'], algorithm='HS256')
-            
             logger.debug("Admin signed in successfully")
             return jsonify({
                 'message': 'Signed in successfully',
@@ -166,7 +150,6 @@ def signin():
                 }
             }), 200
 
-        # Regular user authentication
         user = User.query.filter_by(email=data['email']).first()
         if not user or not bcrypt.check_password_hash(user.password, data['password']):
             logger.error("Invalid credentials")
@@ -191,14 +174,12 @@ def signin():
                 'is_admin': False
             }
         }), 200
-
     except Exception as e:
         logger.error(f"Error during signin: {str(e)}")
         return jsonify({'message': f'Error: {str(e)}'}), 500
 
 @auth_bp.route('/verify', methods=['GET'])
 def verify():
-    """Verify user token."""
     try:
         auth_header = request.headers.get('Authorization')
         if not auth_header or not auth_header.startswith('Bearer '):
@@ -237,7 +218,6 @@ def verify():
                 'is_admin': False
             }
         }), 200
-
     except jwt.ExpiredSignatureError:
         logger.error("Token expired")
         return jsonify({'message': 'Token expired'}), 401
@@ -250,7 +230,6 @@ def verify():
 
 @auth_bp.route('/conversations', methods=['GET'])
 def conversations():
-    """Get all conversations for the authenticated user with pagination."""
     logger.debug("Received conversations request")
     user = verify_user_from_token(request.headers.get('Authorization'))
     if not user:
@@ -291,7 +270,6 @@ def conversations():
 
 @auth_bp.route('/conversation/<int:conversation_id>', methods=['GET', 'POST'])
 def conversation(conversation_id):
-    """Handle GET and POST requests for a specific conversation."""
     logger.debug(f"Received conversation request for ID: {conversation_id}")
     user = verify_user_from_token(request.headers.get('Authorization'))
     if not user:
@@ -321,7 +299,6 @@ def conversation(conversation_id):
         except Exception as e:
             logger.error(f"Error fetching conversation: {str(e)}")
             return jsonify({'message': f'Error fetching conversation: {str(e)}'}), 500
-
     elif request.method == 'POST':
         logger.debug(f"Processing POST request for conversation: {conversation_id}")
         try:
@@ -354,7 +331,6 @@ def conversation(conversation_id):
             conversation.messages.append(user_message)
             logger.debug(f"Added user message: {user_message}")
 
-            # Use the safe medical profile access function
             patient_info = {
                 'name': user.name,
                 'language': user.language,
@@ -380,7 +356,6 @@ def conversation(conversation_id):
                 ai_response_text = "I'm sorry, I couldn't process your request due to an issue with the AI service. Please try again later."
 
             logger.info(f"AI response received: {ai_response_text[:100]}...")
-
             ai_message = {
                 'id': str(uuid.uuid4()),
                 'text': ai_response_text,
@@ -410,7 +385,6 @@ def conversation(conversation_id):
             }
             logger.debug(f"Returning response: {response}")
             return jsonify(response), 200
-
         except Exception as e:
             db.session.rollback()
             logger.error(f"Error saving conversation: {str(e)}")
@@ -418,7 +392,6 @@ def conversation(conversation_id):
 
 @auth_bp.route('/conversation', methods=['GET', 'POST'])
 def latest_conversation():
-    """Handle GET and POST requests for the latest conversation."""
     logger.debug("Received latest conversation request")
     auth_header = request.headers.get('Authorization')
     user = verify_user_from_token(auth_header)
@@ -453,7 +426,6 @@ def latest_conversation():
         except Exception as e:
             logger.error(f"Error fetching conversation: {str(e)}")
             return jsonify({'message': f'Error fetching conversation: {str(e)}'}), 500
-
     elif request.method == 'POST':
         logger.debug("Processing POST request for latest conversation")
         try:
@@ -505,7 +477,6 @@ def latest_conversation():
             conversation.messages.append(user_message)
             logger.debug(f"Added user message: {user_message}")
 
-            # Use the safe medical profile access function
             patient_info = {
                 'name': user.name,
                 'language': user.language,
@@ -531,7 +502,6 @@ def latest_conversation():
                 ai_response_text = "I'm sorry, I couldn't process your request due to an issue with the AI service. Please try again later."
 
             logger.info(f"AI response received: {ai_response_text[:100]}...")
-
             ai_message = {
                 'id': str(uuid.uuid4()),
                 'text': ai_response_text,
@@ -561,7 +531,6 @@ def latest_conversation():
             }
             logger.debug(f"Returning response: {response}")
             return jsonify(response), 200
-
         except Exception as e:
             db.session.rollback()
             logger.error(f"Error saving conversation: {str(e)}")
@@ -569,7 +538,6 @@ def latest_conversation():
 
 @auth_bp.route('/profile', methods=['GET'])
 def get_profile():
-    """Fetch the user's medical profile."""
     try:
         user = verify_user_from_token(request.headers.get('Authorization'))
         if not user:
@@ -627,7 +595,6 @@ def get_profile():
 
 @auth_bp.route('/profile', methods=['POST'])
 def save_profile():
-    """Save or update the user's medical profile."""
     try:
         user = verify_user_from_token(request.headers.get('Authorization'))
         if not user:
@@ -646,12 +613,10 @@ def save_profile():
             profile = MedicalProfile(user_id=user.id)
             db.session.add(profile)
         
-        # Update fields with validation
         profile.first_name = data.get('firstName', profile.first_name or '')
         profile.last_name = data.get('lastName', profile.last_name or '')
         profile.phone = data.get('phone', profile.phone or '')
         
-        # Handle date fields safely
         try:
             profile.date_of_birth = datetime.datetime.strptime(data['dateOfBirth'], '%Y-%m-%d').date() if data.get('dateOfBirth') and data['dateOfBirth'].strip() else profile.date_of_birth
         except (ValueError, TypeError):
@@ -679,7 +644,6 @@ def save_profile():
         profile.medical_history = data.get('medicalHistory', profile.medical_history or '')
         profile.vaccination_history = data.get('vaccinationHistory', profile.vaccination_history or '')
         
-        # Handle date fields safely
         try:
             profile.last_dental_visit = datetime.datetime.strptime(data['lastDentalVisit'], '%Y-%m-%d').date() if data.get('lastDentalVisit') and data['lastDentalVisit'].strip() else profile.last_dental_visit
         except (ValueError, TypeError):
@@ -700,8 +664,6 @@ def save_profile():
         })
         profile.family_history = data.get('familyHistory', profile.family_history or '')
 
-        # updated_at will be set automatically by SQLAlchemy onupdate
-        
         try:
             db.session.commit()
             logger.debug(f"Profile saved successfully for user_id: {user.id}")
@@ -780,17 +742,12 @@ def token_required(f):
         except Exception as e:
             logger.error(f"Unexpected error verifying token: {str(e)}")
             return jsonify({'message': f'Error: {str(e)}'}), 500
-
     return decorated
 
 @admin_bp.route('/users', methods=['GET'])
 @token_required
 @cache.cached(timeout=300, query_string=True)
 def get_users(token_data):
-    """
-    Fetch all users for the admin dashboard with pagination.
-    Query parameters: page (default 1), per_page (default 10)
-    """
     if not token_data.get('is_admin', False):
         logger.warning(f"Non-admin access attempt by user_id: {token_data.get('user_id', 'unknown')}")
         return jsonify({'message': 'Admin access required'}), 403
@@ -846,10 +803,6 @@ def get_users(token_data):
 @token_required
 @cache.cached(timeout=300, query_string=True)
 def get_symptom_trends(token_data):
-    """
-    Fetch symptom trends data for the admin dashboard across all users.
-    Query parameter: time_range (24h, 7d, 30d, 90d)
-    """
     if not token_data.get('is_admin', False):
         logger.warning(f"Non-admin access attempt by user_id: {token_data.get('user_id', 'unknown')}")
         return jsonify({'message': 'Admin access required'}), 403
@@ -871,10 +824,6 @@ def get_symptom_trends(token_data):
 @token_required
 @cache.cached(timeout=300, query_string=True)
 def get_sentiment_analysis(token_data):
-    """
-    Fetch sentiment analysis data for the admin dashboard across specified conversations.
-    Query parameter: conversation_ids (comma-separated list of IDs)
-    """
     if not token_data.get('is_admin', False):
         logger.warning(f"Non-admin access attempt by user_id: {token_data.get('user_id', 'unknown')}")
         return jsonify({'message': 'Admin access required'}), 403
@@ -902,10 +851,6 @@ def get_sentiment_analysis(token_data):
 @token_required
 @cache.cached(timeout=300, query_string=True)
 def get_diagnostic_patterns(token_data):
-    """
-    Fetch diagnostic patterns data for the admin dashboard across all users.
-    Query parameter: time_range (24h, 7d, 30d, 90d)
-    """
     if not token_data.get('is_admin', False):
         logger.warning(f"Non-admin access attempt by user_id: {token_data.get('user_id', 'unknown')}")
         return jsonify({'message': 'Admin access required'}), 403
@@ -927,10 +872,6 @@ def get_diagnostic_patterns(token_data):
 @token_required
 @cache.cached(timeout=300, query_string=True)
 def get_communication_metrics(token_data):
-    """
-    Fetch communication metrics data for the admin dashboard across all users.
-    Query parameter: time_range (24h, 7d, 30d, 90d)
-    """
     if not token_data.get('is_admin', False):
         logger.warning(f"Non-admin access attempt by user_id: {token_data.get('user_id', 'unknown')}")
         return jsonify({'message': 'Admin access required'}), 403
@@ -952,10 +893,6 @@ def get_communication_metrics(token_data):
 @token_required
 @cache.cached(timeout=300, query_string=True)
 def get_user_activity(token_data):
-    """
-    Fetch user activity data for the admin dashboard across all users.
-    Query parameter: time_range (24h, 7d)
-    """
     if not token_data.get('is_admin', False):
         logger.warning(f"Non-admin access attempt by user_id: {token_data.get('user_id', 'unknown')}")
         return jsonify({'message': 'Admin access required'}), 403
@@ -977,9 +914,6 @@ def get_user_activity(token_data):
 @token_required
 @cache.cached(timeout=300)
 def get_health_alerts(token_data):
-    """
-    Fetch health alerts data for the admin dashboard across all users.
-    """
     if not token_data.get('is_admin', False):
         logger.warning(f"Non-admin access attempt by user_id: {token_data.get('user_id', 'unknown')}")
         return jsonify({'message': 'Admin access required'}), 403
@@ -996,10 +930,6 @@ def get_health_alerts(token_data):
 @token_required
 @cache.cached(timeout=300, query_string=True)
 def get_treatment_preferences(token_data):
-    """
-    Fetch treatment preferences data for the admin dashboard across all users.
-    Query parameter: time_range (24h, 7d, 30d, 90d)
-    """
     if not token_data.get('is_admin', False):
         logger.warning(f"Non-admin access attempt by user_id: {token_data.get('user_id', 'unknown')}")
         return jsonify({'message': 'Admin access required'}), 403
@@ -1021,10 +951,6 @@ def get_treatment_preferences(token_data):
 @token_required
 @cache.cached(timeout=300, query_string=True)
 def get_health_literacy(token_data):
-    """
-    Fetch health literacy data for the admin dashboard across all users.
-    Query parameter: time_range (24h, 7d, 30d, 90d)
-    """
     if not token_data.get('is_admin', False):
         logger.warning(f"Non-admin access attempt by user_id: {token_data.get('user_id', 'unknown')}")
         return jsonify({'message': 'Admin access required'}), 403
@@ -1046,10 +972,6 @@ def get_health_literacy(token_data):
 @token_required
 @cache.cached(timeout=300, query_string=True)
 def get_workflow_metrics(token_data):
-    """
-    Fetch workflow metrics data for the admin dashboard across all users.
-    Query parameter: time_range (24h, 7d, 30d, 90d)
-    """
     if not token_data.get('is_admin', False):
         logger.warning(f"Non-admin access attempt by user_id: {token_data.get('user_id', 'unknown')}")
         return jsonify({'message': 'Admin access required'}), 403
@@ -1071,10 +993,6 @@ def get_workflow_metrics(token_data):
 @token_required
 @cache.cached(timeout=300, query_string=True)
 def get_ai_performance(token_data):
-    """
-    Fetch AI performance metrics data for the admin dashboard across all users.
-    Query parameter: time_range (24h, 7d, 30d, 90d)
-    """
     if not token_data.get('is_admin', False):
         logger.warning(f"Non-admin access attempt by user_id: {token_data.get('user_id', 'unknown')}")
         return jsonify({'message': 'Admin access required'}), 403
@@ -1096,10 +1014,6 @@ def get_ai_performance(token_data):
 @token_required
 @cache.cached(timeout=300, query_string=True)
 def get_all_conversations(token_data):
-    """
-    Fetch all conversations across all users for the admin dashboard (for sentiment analysis).
-    Query parameters: page (default 1), per_page (default 10)
-    """
     if not token_data.get('is_admin', False):
         logger.warning(f"Non-admin access attempt by user_id: {token_data.get('user_id', 'unknown')}")
         return jsonify({'message': 'Admin access required'}), 403
@@ -1133,6 +1047,5 @@ def get_all_conversations(token_data):
 
 @auth_bp.route('/ping', methods=['GET'])
 def ping():
-    """Health check endpoint to keep the service alive."""
     logger.debug("Received ping request")
     return jsonify({'status': 'alive'}), 200

@@ -797,7 +797,7 @@ def get_users(token_data):
         page = int(request.args.get('page', 1))
         per_page = int(request.args.get('per_page', 10))
 
-        # Query users with their session data, sorted by id instead of created_at
+        # Query users with their session data, sorted by id
         users_query = User.query.order_by(User.id.desc())
         paginated_users = users_query.paginate(page=page, per_page=per_page, error_out=False)
         users = paginated_users.items
@@ -817,17 +817,16 @@ def get_users(token_data):
                 ]
                 avg_session_time = round(mean(session_durations), 1) if session_durations else 0
 
-            # Use created_at from User model and determine last active and status
+            # Use created_at from User model to determine last active and status
             last_session = UserSession.query.filter_by(user_id=user.id)\
                 .order_by(UserSession.start_time.desc()).first()
             last_active = last_session.start_time if last_session else user.created_at
-            status = 'active' if last_active and (datetime.datetime.now(timezone.utc) - last_active).days < 30 else 'inactive'
+            status = 'active' if last_active and (datetime.now(timezone.utc) - last_active).days < 30 else 'inactive'
 
             user_data.append({
                 'id': user.id,
                 'name': user.name,
                 'email': user.email,
-                'joined_at': user.created_at.isoformat(),  # Use created_at from User model
                 'status': status,
                 'last_active': last_active.isoformat() if last_active else None,
                 'total_sessions': total_sessions,

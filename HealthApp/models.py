@@ -12,7 +12,7 @@ class User(db.Model):
     phone = db.Column(db.String(15), nullable=False, unique=True)
     language = db.Column(db.String(32), nullable=False)
     gender = db.Column(db.String(20), nullable=False)
-
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
     # Relationships
     conversations = db.relationship('Conversation', back_populates='user', lazy=True)
     medical_profile = db.relationship('MedicalProfile', back_populates='user', uselist=False, lazy=True)

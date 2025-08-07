@@ -357,7 +357,7 @@ class HealthAnalyzer:
                     user_messages = []
                     for msg in messages:
                         if isinstance(msg, dict):
-                            if msg.get('isUser', False) or msg.get('role') == 'user'):
+                            if msg.get('isUser', False) or msg.get('role') == 'user':
                                 text = msg.get('text', msg.get('content', ''))
                                 if text and len(text.strip()) > 5:
                                     user_messages.append(text)

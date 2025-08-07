@@ -6,8 +6,7 @@ import uuid
 import logging
 from functools import wraps
 from statistics import mean
-from . import db, bcrypt
-from .init import cache
+from . import db, bcrypt, cache
 from .models import User, Conversation, MedicalProfile, UserSession
 from .ai_engine import generate_personalized_response
 from .analysis import HealthAnalyzer

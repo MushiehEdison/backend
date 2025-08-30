@@ -22,7 +22,7 @@ def create_app():
     
     # Configure Flask app
     app.config['SECRET_KEY'] = os.getenv('SECRET_KEY')
-    app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv('DATABASE_URL')
+    app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv('postgresql://edison:EzmAyyJ1IyKK78xfPzseSUUct6kmFQY5@dpg-d2pcvh3e5dus73b0snvg-a/track2_1232')
     app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
     app.config['CACHE_TYPE'] = 'SimpleCache'  # Configure cache type
     app.config['CACHE_DEFAULT_TIMEOUT'] = 300  # Default cache timeout (in seconds)
